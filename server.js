@@ -648,7 +648,7 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const db = getDB();
-      const runId = urlObj.searchParams.get('runId') || (urlObj.searchParams.get('mode') === 'interactive' ? 'run_dev' : 'run_research');
+      const runId = QueryEngine.resolveRunId(urlObj.searchParams.get('runId') || urlObj.searchParams.get('mode'));
       let filterSql = 'WHERE e.run_id = ? AND e.symbol = ? COLLATE NOCASE';
       const params = [runId, symbol];
 
@@ -1087,8 +1087,18 @@ const server = http.createServer(async (req, res) => {
 
 // Initialize database
 try {
-  getDB();
+  const db = getDB();
   logger.info('SERVER', 'Database initialization check passed.');
+  
+  // Clean up stuck jobs (mark 'running' from previous process life as 'failed')
+  const stuckCleanup = db.prepare("UPDATE research_jobs SET status = 'failed', error_message = 'Job terminated due to server restart' WHERE status = 'running'").run();
+  if (stuckCleanup.changes > 0) {
+    logger.info('SERVER', `Cleaned up ${stuckCleanup.changes} stuck running jobs on startup.`);
+  }
+  const runsCleanup = db.prepare("UPDATE research_runs SET status = 'failed' WHERE status = 'running'").run();
+  if (runsCleanup.changes > 0) {
+    logger.info('SERVER', `Cleaned up ${runsCleanup.changes} stuck running runs on startup.`);
+  }
 } catch (dbErr) {
   logger.error('SERVER', 'Database initialization failed', dbErr);
 }
@@ -1108,20 +1118,27 @@ server.listen(PORT, () => {
   if (filePath) {
     logger.info('SERVER', `[Startup] Checking database seed status for: ${defaultSymbol}`);
     
-    // Check if DB is already seeded to avoid blocking sync pipeline
+    // Check if DB is already fully seeded with at least one completed run that contains events
     let isSeeded = false;
     try {
       const db = getDB();
-      const countRes = db.prepare('SELECT COUNT(*) as count FROM structure_events WHERE symbol = ?').get(defaultSymbol);
-      if (countRes && countRes.count > 0) {
-        logger.info('SERVER', `[Startup] Database already seeded with ${countRes.count} events for ${defaultSymbol}.`);
+      const completedRun = db.prepare(`
+        SELECT r.run_id FROM research_runs r
+        JOIN structure_events e ON r.run_id = e.run_id
+        WHERE r.symbol = ? AND r.status = 'completed' AND r.run_id LIKE 'job_%'
+        LIMIT 1
+      `).get(defaultSymbol);
+      if (completedRun) {
+        const countRes = db.prepare('SELECT COUNT(*) as count FROM structure_events WHERE symbol = ?').get(defaultSymbol);
+        logger.info('SERVER', `[Startup] Database already seeded with ${countRes ? countRes.count : 0} events for ${defaultSymbol} (Run ID: ${completedRun.run_id}).`);
         isSeeded = true;
       }
     } catch (dbErr) {
-      logger.error('SERVER', 'Failed to check event count in DB', dbErr);
+      logger.error('SERVER', 'Failed to check completed run status in DB', dbErr);
     }
 
     if (!isSeeded) {
+      logger.info('SERVER', `[Startup] Database not seeded or seeding was incomplete. Triggering background worker sync...`);
       triggerWorkerSync(defaultSymbol, filePath, { mode: 'interactive', limitBars: 80000 });
     } else {
       // Just warm the cache asynchronously on the main thread

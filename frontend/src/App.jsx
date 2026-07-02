@@ -1332,29 +1332,46 @@ export default function App() {
     });
   }, [replayTimeOffset]);
 
-  // Poll sync progress when running
+  // Trigger manual database sync
+  const handleTriggerSync = async () => {
+    try {
+      setIsProgressOverlayVisible(true);
+      const res = await fetch(`http://localhost:8080/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limitBarsInteractive}`);
+      const data = await res.json();
+      if (!data.success) {
+        alert("Failed to start sync: " + data.message);
+        setIsProgressOverlayVisible(false);
+      }
+    } catch (e) {
+      console.error("Failed to trigger sync:", e);
+      setIsProgressOverlayVisible(false);
+    }
+  };
+
+  // Poll sync progress when running, and check on load
   useEffect(() => {
-    if (!isProgressOverlayVisible) return;
-    
     let timer;
+    let reloadTimer = null;
     const poll = async () => {
       try {
         const res = await fetch(`http://localhost:8080/api/algo/sync/progress?symbol=${activeSymbol}&mode=${activeResearchMode}`);
         const data = await res.json();
         if (data && data.success) {
           setSyncProgress(data);
-          if (data.status === 'completed' || data.status === 'error' || data.status === 'idle') {
-            clearInterval(timer);
-            // Hide after a small delay to let user see 100% completion
-            setTimeout(() => {
-              setIsProgressOverlayVisible(false);
-              setSyncProgress(null);
-              // Clear caches to force reload of the fresh database events
-              slidingWindowCache1.clear();
-              slidingWindowCache2.clear();
-              // Reload page or trigger unified fetch reload to populate fresh DB data
-              window.location.reload();
-            }, 1500);
+          
+          if (data.status === 'running') {
+            setIsProgressOverlayVisible(true);
+          } else if (data.status === 'completed' || data.status === 'error') {
+            if (isProgressOverlayVisible && !reloadTimer) {
+              clearInterval(timer);
+              reloadTimer = setTimeout(() => {
+                setIsProgressOverlayVisible(false);
+                setSyncProgress(null);
+                slidingWindowCache1.clear();
+                slidingWindowCache2.clear();
+                window.location.reload();
+              }, 1500);
+            }
           }
         }
       } catch (e) {
@@ -1363,8 +1380,11 @@ export default function App() {
     };
 
     poll();
-    timer = setInterval(poll, 1000);
-    return () => clearInterval(timer);
+    timer = setInterval(poll, isProgressOverlayVisible ? 1000 : 3000);
+    return () => {
+      clearInterval(timer);
+      if (reloadTimer) clearTimeout(reloadTimer);
+    };
   }, [isProgressOverlayVisible, activeSymbol, activeResearchMode]);
 
 
@@ -2278,7 +2298,32 @@ export default function App() {
         </button>
 
         {/* Settings button on the right */}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px', alignItems: 'center' }}>
+          <button
+            className={`toolbar-btn ${syncProgress?.status === 'running' ? 'active' : ''}`}
+            style={{
+              padding: '5px 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: syncProgress?.status === 'running' ? 'rgba(0, 82, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+              border: syncProgress?.status === 'running' ? '1px solid rgba(0, 82, 255, 0.4)' : '1px solid var(--border)',
+              color: syncProgress?.status === 'running' ? '#00e5ff' : 'var(--text-bright)',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              height: '28px',
+              transition: 'all 0.2s',
+              marginRight: '6px'
+            }}
+            onClick={handleTriggerSync}
+            disabled={syncProgress?.status === 'running'}
+            title="Trigger manual database sync for current symbol"
+          >
+            <RefreshCw size={12} className={syncProgress?.status === 'running' ? 'spin' : ''} />
+            {syncProgress?.status === 'running' ? 'Syncing...' : 'Sync Data'}
+          </button>
           <button 
             className="toolbar-icon-btn" 
             onClick={() => setIsDarkMode(v => !v)} 
@@ -2870,57 +2915,56 @@ export default function App() {
         <div style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(9, 11, 16, 0.9)',
+          background: 'rgba(9, 10, 16, 0.75)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
           zIndex: 9999,
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center'
         }}>
-          <div style={{
-            background: '#1c2030',
-            border: '1px solid var(--border)',
-            borderRadius: '12px',
-            padding: '24px',
-            width: '400px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          <div className="glass-panel" style={{
+            borderRadius: '16px',
+            padding: '28px',
+            width: '420px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '16px'
+            gap: '20px'
           }}>
-            <h3 style={{ margin: 0, color: '#fff', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <RefreshCw className="spin" size={18} style={{ color: 'var(--accent)' }} />
-              Running Research Sync...
+            <h3 style={{ margin: 0, color: '#fff', fontSize: '18px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px', letterSpacing: '-0.3px' }}>
+              <RefreshCw className="spin" size={20} style={{ color: '#0052ff' }} />
+              Background Sync in Progress
             </h3>
             
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
                 <span>Symbol:</span>
                 <strong style={{ color: '#fff' }}>{activeSymbol}</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Target Engine:</span>
-                <strong style={{ color: '#fff' }}>{activeResearchMode === 'interactive' ? 'Interactive Mode' : 'Batch Research Mode'}</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                <span>Target:</span>
+                <strong style={{ color: '#fff' }}>{activeResearchMode === 'interactive' ? 'Interactive Terminal' : 'Batch Research'}</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
                 <span>Status:</span>
-                <strong style={{ color: syncProgress.status === 'completed' ? '#089981' : '#ffb300' }}>
+                <span className={`sync-status-indicator ${syncProgress.status || 'idle'}`}>
                   {syncProgress.status?.toUpperCase() || 'RUNNING'}
-                </strong>
+                </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
                 <span>Bars Processed:</span>
-                <strong style={{ color: '#fff' }}>{syncProgress.bars_processed?.toLocaleString() || 0}</strong>
+                <strong style={{ color: '#fff' }}>{syncProgress.bars_processed?.toLocaleString() || 'Processing...'}</strong>
               </div>
               {syncProgress.total_chunks > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
                   <span>Progress:</span>
-                  <strong style={{ color: '#fff' }}>
+                  <strong style={{ color: '#0052ff' }}>
                     {Math.round((syncProgress.current_chunk / syncProgress.total_chunks) * 100)}%
                   </strong>
                 </div>
               )}
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>ETA:</span>
+                <span>Estimated Time Remaining:</span>
                 <strong style={{ color: '#fff' }}>
                   {syncProgress.eta_ms > 0 ? `${Math.ceil(syncProgress.eta_ms / 1000)} seconds` : 'Calculating...'}
                 </strong>
@@ -2929,17 +2973,17 @@ export default function App() {
 
             {syncProgress.total_chunks > 0 && (
               <div style={{
-                height: '8px',
-                background: '#131722',
-                borderRadius: '4px',
+                height: '6px',
+                background: 'rgba(255, 255, 255, 0.05)',
+                borderRadius: '3px',
                 overflow: 'hidden',
                 marginTop: '4px'
               }}>
                 <div style={{
                   height: '100%',
                   width: `${(syncProgress.current_chunk / syncProgress.total_chunks) * 100}%`,
-                  background: 'var(--accent)',
-                  transition: 'width 0.3s ease'
+                  background: 'linear-gradient(90deg, #0052ff, #00d2ff)',
+                  transition: 'width 0.4s cubic-bezier(0.1, 0.8, 0.25, 1)'
                 }} />
               </div>
             )}

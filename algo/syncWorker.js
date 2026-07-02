@@ -11,7 +11,11 @@ async function run() {
       workspaceId: 'development',
       symbol,
       taskType: 'research_run',
-      config: {},
+      config: {
+        limitBars: workerData.limitBars || null,
+        mode: workerData.mode || 'interactive',
+        resume: !!workerData.resume
+      },
       priority: 10
     });
 

@@ -1304,6 +1304,15 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
     const allRanges = allEvents.filter(e => e.concept === 'dealing_range');
     const allPdArrays = allEvents.filter(e => e.concept === 'fvg' || e.concept === 'ifvg' || e.concept === 'ob' || e.concept === 'breaker' || e.concept === 'pd_array_matrix');
 
+    // Group ranges by timeframe for fast lower-timeframe lookup
+    const rangesByTf = {};
+    for (const r of allRanges) {
+      if (!rangesByTf[r.timeframe]) rangesByTf[r.timeframe] = [];
+      rangesByTf[r.timeframe].push(r);
+    }
+
+    const tfs = [1, 5, 15, 60, 240, 1440];
+
     for (const range of allRanges) {
       // 1. Targets Relationship
       const targetLiqId = range.properties?.deliveryState?.target_liquidity_id;
@@ -1318,20 +1327,23 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       const rStart = range.timeStart;
       const rEnd = range.timeEnd || Infinity;
 
-      // Find nested child ranges (lower timeframes or chronologically inside)
-      for (const childRange of allRanges) {
-        if (childRange.id === range.id) continue;
-        if (childRange.timeframe >= range.timeframe) continue; // Must be lower timeframe to nest inside HTF range
+      // Find nested child ranges (lower timeframes only)
+      for (const tfVal of tfs) {
+        if (tfVal >= range.timeframe) continue;
+        const childRanges = rangesByTf[tfVal] || [];
+        for (const childRange of childRanges) {
+          if (childRange.id === range.id) continue;
 
-        if (childRange.priceLow >= rLow &&
-            childRange.priceHigh <= rHigh &&
-            childRange.timeStart >= rStart &&
-            (childRange.timeEnd || childRange.timeStart) <= rEnd) {
-          // range contains childRange
-          insertRelationship.run(runId, range.id, childRange.id, 'contains');
-          // childRange nested_inside range
-          insertRelationship.run(runId, range.id, childRange.id, 'nested_inside');
-          stageCounts.relationshipsBuilt += 2;
+          if (childRange.priceLow >= rLow &&
+              childRange.priceHigh <= rHigh &&
+              childRange.timeStart >= rStart &&
+              (childRange.timeEnd || childRange.timeStart) <= rEnd) {
+            // range contains childRange
+            insertRelationship.run(runId, range.id, childRange.id, 'contains');
+            // childRange nested_inside range
+            insertRelationship.run(runId, range.id, childRange.id, 'nested_inside');
+            stageCounts.relationshipsBuilt += 2;
+          }
         }
       }
 
