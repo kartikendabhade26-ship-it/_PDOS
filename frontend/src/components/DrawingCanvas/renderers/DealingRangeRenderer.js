@@ -128,7 +128,7 @@ export default class DealingRangeRenderer {
     ctx.stroke();
 
     // 25% and 75% Fibonacci levels
-    ctx.strokeStyle = hexToRGBA('#ffffff', opacity * 0.2);
+    ctx.strokeStyle = hexToRGBA('#ffffff', opacity * 0.3);
     ctx.setLineDash([2, 2]);
     
     ctx.beginPath();
@@ -150,8 +150,10 @@ export default class DealingRangeRenderer {
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     
-    ctx.fillText('50% (EQ)', rx1 + 6, ryEq);
     ctx.fillText('100% (High)', rx1 + 6, ryHigh);
+    ctx.fillText('75%', rx1 + 6, ry75);
+    ctx.fillText('50% (EQ)', rx1 + 6, ryEq);
+    ctx.fillText('25%', rx1 + 6, ry25);
     ctx.fillText('0% (Low)', rx1 + 6, ryLow);
     
     ctx.restore();
