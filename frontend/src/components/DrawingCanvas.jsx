@@ -485,6 +485,9 @@ export default function DrawingCanvas({
 
     // Call draw immediately
     schedulerRef.current.markAllDirty();
+    if (onRenderCompleted) {
+      setTimeout(onRenderCompleted, 100);
+    }
 
     return () => {
       try {
