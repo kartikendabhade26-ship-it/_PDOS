@@ -2134,23 +2134,37 @@ export default function DrawingCanvas({
   useEffect(() => {
     if (!chart || !series || !chartContainer) return;
 
-    let lastTopPrice = null;
-    let lastBottomPrice = null;
+    let stableFrames = 0;
+    let lastPriceRange = { from: 0, to: 0 };
     let animationFrameId;
 
     const checkPriceScale = () => {
       if (!isMountedRef.current) return;
-      if (series) {
+      if (chart && series) {
         try {
-          const topPrice = series.coordinateToPrice(0);
-          const bottomPrice = series.coordinateToPrice(chartContainer.clientHeight);
-          if (topPrice !== lastTopPrice || bottomPrice !== lastBottomPrice) {
-            lastTopPrice = topPrice;
-            lastBottomPrice = bottomPrice;
-            scheduleDraw();
+          const currentRange = chart.priceScale('right').getVisibleRange();
+          if (currentRange) {
+            if (!lastPriceRange || currentRange.from !== lastPriceRange.from || currentRange.to !== lastPriceRange.to) {
+              lastPriceRange = currentRange;
+              stableFrames = 0;
+              // ACTIVE DRAG: disable cache so every projection hits the live API
+              if (projectionServiceRef.current) {
+                projectionServiceRef.current.setCacheEnabled(false);
+              }
+              schedulerRef.current.markAllDirty();
+            } else {
+              stableFrames++;
+              // After 3 stable frames (~50ms), re-enable cache for performance
+              if (stableFrames === 3) {
+                if (projectionServiceRef.current) {
+                  projectionServiceRef.current.setCacheEnabled(true);
+                }
+                schedulerRef.current.markAllDirty();
+              }
+            }
           }
         } catch (e) {
-          // Series might be disposed, ignore
+          // Series/chart might be disposed
         }
       }
       if (isMountedRef.current) {

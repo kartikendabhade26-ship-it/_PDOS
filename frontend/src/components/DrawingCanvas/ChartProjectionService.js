@@ -1,7 +1,7 @@
 /**
  * ChartProjectionService.js
  * Centralizes coordinate projections and handles persistent caching of pixel positions.
- * The cache is invalidated when panning, zooming, resizing, or reloading datasets.
+ * Supports bypassing cache during active vertical price-scale dragging.
  */
 export default class ChartProjectionService {
   constructor() {
@@ -11,6 +11,14 @@ export default class ChartProjectionService {
     this.allBars = [];
     this.timeToIndexMap = new Map();
     this.coordCache = new Map();
+    this.cacheEnabled = true;
+  }
+
+  setCacheEnabled(enabled) {
+    this.cacheEnabled = enabled;
+    if (!enabled) {
+      this.invalidateCache();
+    }
   }
 
   updateDataset(bars, timeframe) {
@@ -36,8 +44,9 @@ export default class ChartProjectionService {
   pointToCoords(point) {
     if (!point || !this.chart || !this.series) return null;
 
-    const cacheKey = `${point.time}_${point.price !== undefined ? point.price : 'noPrice'}`;
-    if (this.coordCache.has(cacheKey)) {
+    const useCache = this.cacheEnabled !== false;
+    const cacheKey = useCache ? `${point.time}_${point.price !== undefined ? point.price : 'noPrice'}` : null;
+    if (useCache && this.coordCache.has(cacheKey)) {
       return this.coordCache.get(cacheKey);
     }
 
@@ -76,18 +85,24 @@ export default class ChartProjectionService {
       try {
         y = this.series.priceToCoordinate(point.price);
       } catch (e) {
-        this.coordCache.set(cacheKey, null);
+        if (useCache && cacheKey) {
+          this.coordCache.set(cacheKey, null);
+        }
         return null;
       }
     }
 
     if (x === null || (point.price !== undefined && y === null)) {
-      this.coordCache.set(cacheKey, null);
+      if (useCache && cacheKey) {
+        this.coordCache.set(cacheKey, null);
+      }
       return null;
     }
 
     const coords = { x, y };
-    this.coordCache.set(cacheKey, coords);
+    if (useCache && cacheKey) {
+      this.coordCache.set(cacheKey, coords);
+    }
     return coords;
   }
 }
