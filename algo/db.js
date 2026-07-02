@@ -444,6 +444,7 @@ function initTables(db) {
       FOREIGN KEY (run_id, event_id) REFERENCES structure_events (run_id, event_id) ON DELETE CASCADE
     );
   `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_context_run_id ON event_context_snapshots (run_id);`);
 
   // 11. Liquidity Objects Table
   db.exec(`
