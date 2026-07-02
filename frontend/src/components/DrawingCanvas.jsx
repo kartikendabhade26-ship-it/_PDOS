@@ -1314,7 +1314,7 @@ export default function DrawingCanvas({
     });
 
     const paneWidth = width - priceScaleWidth;
-    const paneHeight = height - timeScaleHeight;
+    const paneHeight = height - timeScaleHeight - 28;
 
     return { paneWidth, paneHeight, priceScaleWidth, timeScaleHeight };
   };
@@ -3615,10 +3615,10 @@ export default function DrawingCanvas({
         className="overlay-canvases-container"
         style={{
           position: 'absolute',
-          top: 0,
+          top: '28px',
           left: 0,
           width: '100%',
-          height: '100%',
+          height: 'calc(100% - 28px)',
           pointerEvents: 'none'
         }}
       >
