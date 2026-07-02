@@ -1320,20 +1320,12 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
     }
 
     const allRanges = allEvents.filter(e => e.concept === 'dealing_range');
-    const allPdArrays = allEvents.filter(e => e.concept === 'fvg' || e.concept === 'ifvg' || e.concept === 'ob' || e.concept === 'breaker' || e.concept === 'pd_array_matrix');
 
     // Group ranges by timeframe for fast lower-timeframe lookup
     const rangesByTf = {};
     for (const r of allRanges) {
       if (!rangesByTf[r.timeframe]) rangesByTf[r.timeframe] = [];
       rangesByTf[r.timeframe].push(r);
-    }
-
-    // Group PD arrays by timeframe to narrow down iterations
-    const pdArraysByTf = {};
-    for (const arr of allPdArrays) {
-      if (!pdArraysByTf[arr.timeframe]) pdArraysByTf[arr.timeframe] = [];
-      pdArraysByTf[arr.timeframe].push(arr);
     }
 
     const tfs = [1, 5, 15, 60, 240, 1440];
@@ -1376,23 +1368,6 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
             insertRelationship.run(runId, range.id, childRange.id, 'nested_inside');
             stageCounts.relationshipsBuilt += 2;
           }
-        }
-      }
-
-      // Find active PD arrays inside this Dealing Range
-      const tfPdArrays = pdArraysByTf[range.timeframe] || [];
-      // Find starting index within range's active window using binary search
-      const startIdx = findStartIndex(tfPdArrays, rStart);
-
-      for (let k = startIdx; k < tfPdArrays.length; k++) {
-        const arr = tfPdArrays[k];
-        const t = arr.timeStart !== undefined ? arr.timeStart : arr.time;
-        if (t > rEnd) {
-          break; // Stop immediately once we exceed the active window
-        }
-        if (arr.priceLow >= rLow && arr.priceHigh <= rHigh) {
-          insertRelationship.run(runId, range.id, arr.id, 'contains');
-          stageCounts.relationshipsBuilt++;
         }
       }
     }
