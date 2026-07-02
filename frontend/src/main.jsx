@@ -53,6 +53,30 @@ window.addEventListener('unhandledrejection', (event) => {
   }).catch(() => {});
 });
 
+// ─── Prevent browser page-zoom ───────────────────────────────────────────────
+// Ctrl+Scroll would normally zoom the whole page. We intercept it here at the
+// capture phase (before the chart library sees it) and call preventDefault()
+// so the browser never changes the page zoom level.
+// The LightweightCharts instance has handleScale.mouseWheel=true so it will
+// still zoom the chart correctly via its own internal handler.
+window.addEventListener('wheel', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+  }
+}, { passive: false, capture: true });
+
+// Block Ctrl +/−/0 keyboard shortcuts that zoom the browser
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && (
+    e.key === '+' || e.key === '-' || e.key === '=' ||
+    e.key === '_' || e.key === '0' ||
+    e.code === 'Equal' || e.code === 'Minus' || e.code === 'Digit0'
+  )) {
+    e.preventDefault();
+  }
+}, { capture: true });
+// ─────────────────────────────────────────────────────────────────────────────
+
 console.log("Client-side logger initialized. Redirecting logs to server...");
 
 createRoot(document.getElementById('root')).render(
