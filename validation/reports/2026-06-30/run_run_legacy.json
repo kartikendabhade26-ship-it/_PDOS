@@ -1,0 +1,52 @@
+{
+  "run_id": "run_legacy",
+  "timestamp": "2026-06-30T13:46:22.322Z",
+  "correctness": {
+    "nq_session_2026_06_15.json": {
+      "swings": {
+        "passed": false,
+        "errors": [
+          "Missing expected swing: bearish swing at timestamp 1736237040 was not detected.",
+          "Missing expected swing: bullish swing at timestamp 1736237460 was not detected."
+        ]
+      },
+      "liquidity": {
+        "passed": false,
+        "errors": [
+          "Missing expected liquidity pool: direction=ssl, levelPrice=21814.75 was not detected."
+        ]
+      },
+      "registry": {
+        "passed": true,
+        "errors": []
+      },
+      "dealingRanges": {
+        "passed": false,
+        "errors": [
+          "Missing expected dealing range zone: direction=premium, priceHigh=22866.75, priceLow=22860.625"
+        ]
+      },
+      "pdMatrix": {
+        "passed": false,
+        "errors": [
+          "No PD Array Matrix events ('PD_ARRAY_CONTEXT_v1') were generated for symbol: NQ_Historical_Data"
+        ]
+      }
+    }
+  },
+  "performance": {
+    "passed": true,
+    "barsPerSecond": 210084.03361344538,
+    "heapDeltaMb": 15.727005004882812,
+    "timeMs": 476
+  },
+  "dbConsistency": {
+    "passed": true,
+    "errors": []
+  },
+  "rendering": {
+    "passed": true,
+    "errors": []
+  },
+  "passed": false
+}

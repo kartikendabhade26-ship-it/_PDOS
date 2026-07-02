@@ -1,0 +1,46 @@
+[
+  {
+    "time": 1780099200,
+    "priceHigh": 30390.50627142783,
+    "priceLow": 30385.68917719222,
+    "valid": true,
+    "type": "ifvg",
+    "direction": "bearish",
+    "note": "",
+    "barIndex": 493121
+  },
+  {
+    "time": 1780067760,
+    "priceHigh": 30336.5,
+    "priceLow": 30334,
+    "valid": true,
+    "type": "ifvg",
+    "direction": "bearish",
+    "note": "",
+    "displacement": "medium",
+    "liquiditySwept": false,
+    "mss": false,
+    "sessionAligned": true,
+    "discountPremium": "equilibrium",
+    "htfConfluence": false,
+    "analysisNarrative": "",
+    "barIndex": 492597
+  },
+  {
+    "time": 1780103880,
+    "priceHigh": 30436,
+    "priceLow": 30423.75,
+    "valid": true,
+    "type": "ifvg",
+    "direction": "bearish",
+    "note": "",
+    "displacement": "medium",
+    "liquiditySwept": false,
+    "mss": false,
+    "sessionAligned": false,
+    "discountPremium": "equilibrium",
+    "htfConfluence": false,
+    "analysisNarrative": "",
+    "barIndex": 493199
+  }
+]

@@ -1,0 +1,45 @@
+{
+  "run_id": "run_dev",
+  "timestamp": "2026-06-30T13:42:31.638Z",
+  "correctness": {
+    "nq_session_2026_06_15.json": {
+      "swings": {
+        "passed": true,
+        "errors": []
+      },
+      "liquidity": {
+        "passed": true,
+        "errors": []
+      },
+      "registry": {
+        "passed": true,
+        "errors": []
+      },
+      "dealingRanges": {
+        "passed": false,
+        "errors": [
+          "Missing expected dealing range zone: direction=premium, priceHigh=22866.75, priceLow=22860.625"
+        ]
+      },
+      "pdMatrix": {
+        "passed": true,
+        "errors": []
+      }
+    }
+  },
+  "performance": {
+    "passed": true,
+    "barsPerSecond": 316455.6962025317,
+    "heapDeltaMb": 15.623489379882812,
+    "timeMs": 316
+  },
+  "dbConsistency": {
+    "passed": true,
+    "errors": []
+  },
+  "rendering": {
+    "passed": true,
+    "errors": []
+  },
+  "passed": false
+}

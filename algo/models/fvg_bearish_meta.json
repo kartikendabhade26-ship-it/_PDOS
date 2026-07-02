@@ -1,0 +1,74 @@
+{
+  "concept": "fvg_bearish",
+  "feature_names": [
+    "zone_size_pts",
+    "zone_size_atr",
+    "zone_location",
+    "session",
+    "hour_of_day",
+    "day_of_week",
+    "is_near_news",
+    "impulse_body_ratio",
+    "impulse_direction",
+    "impulse_wick_top",
+    "impulse_wick_bot",
+    "relative_volume",
+    "trend_before",
+    "dist_from_swing_high_pts",
+    "dist_from_swing_high_atr",
+    "dist_from_swing_low_pts",
+    "dist_from_swing_low_atr",
+    "consecutive_same_dir",
+    "prev_body_ratio",
+    "prev_direction",
+    "atr",
+    "total_range_pts"
+  ],
+  "model_type": "RandomForest",
+  "accuracy_cv": 0.9250672043010754,
+  "n_samples": 94,
+  "n_valid": 91,
+  "n_invalid": 3,
+  "top_features": [
+    [
+      "zone_size_atr",
+      0.17433492582796775
+    ],
+    [
+      "impulse_wick_bot",
+      0.16861714341184542
+    ],
+    [
+      "dist_from_swing_high_pts",
+      0.10098102196151341
+    ],
+    [
+      "dist_from_swing_low_atr",
+      0.07270487224739954
+    ],
+    [
+      "atr",
+      0.06431263822104301
+    ],
+    [
+      "zone_size_pts",
+      0.060020125568595824
+    ],
+    [
+      "dist_from_swing_high_atr",
+      0.056084557455185625
+    ],
+    [
+      "impulse_body_ratio",
+      0.04671896326250972
+    ],
+    [
+      "zone_location",
+      0.03948966859130829
+    ],
+    [
+      "relative_volume",
+      0.03585863158307362
+    ]
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "validate": "node --expose-gc validation/run_validation.js"
+  },
+  "dependencies": {
+    "onnxruntime-node": "^1.26.0"
+  }
+}

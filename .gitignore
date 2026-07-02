@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+dist/
+.env
+
+# Large datasets & databases
+*.csv
+*.db
+*.db-shm
+*.db-wal
+*.backup.db
+
+# Logs & temp files
+*.log
+scratch_*
+test_output.txt
+.agents/
+.gemini/
