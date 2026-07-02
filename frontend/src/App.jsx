@@ -317,12 +317,14 @@ export default function App() {
   // Workspace and View Mode States
   const [workspaceTab, setWorkspaceTab] = useState('chart'); // 'chart' | 'validation' | 'research' | 'diagnostics'
   const [debugOverlayFilters, setDebugOverlayFilters] = useState({
-    swings: true,
-    liquidity: true,
-    structure: true,
-    dealingRanges: true,
+    swings: false,
+    liquidity: false,
+    structure: false,
+    dealingRanges: false,
     takenLiqOpacity: 0.25   // alpha for taken (terminated) liquidity lines
   });
+
+  const [syncElapsedSeconds, setSyncElapsedSeconds] = useState(0);
 
   // Algo Candidate select / zones display states
   const [selectedConcept, setSelectedConcept] = useState('');
@@ -1386,6 +1388,21 @@ export default function App() {
       if (reloadTimer) clearTimeout(reloadTimer);
     };
   }, [isProgressOverlayVisible, activeSymbol, activeResearchMode]);
+
+  // Track elapsed sync seconds when overlay is active
+  useEffect(() => {
+    let interval;
+    if (isProgressOverlayVisible) {
+      interval = setInterval(() => {
+        setSyncElapsedSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      setSyncElapsedSeconds(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isProgressOverlayVisible]);
 
 
 
@@ -2976,6 +2993,10 @@ export default function App() {
                   </strong>
                 </div>
               )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                <span>Elapsed Time:</span>
+                <strong style={{ color: '#fff' }}>{syncElapsedSeconds} seconds</strong>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>Estimated Time Remaining:</span>
                 <strong style={{ color: '#fff' }}>
