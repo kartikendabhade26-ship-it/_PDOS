@@ -15,15 +15,32 @@
 }
 
 body.dark-theme {
-  --bg: #090a10;
-  --panel: rgba(20, 22, 37, 0.8);
-  --border: rgba(255, 255, 255, 0.08);
-  --accent: #0052ff;
-  --accent-light: rgba(0, 82, 255, 0.18);
-  --text: #cbd5e1;
-  --text-muted: #64748b;
+  --bg: #05070a; /* Obsidian Void */
+  --panel: rgba(255, 255, 255, 0.04); /* Translucent surface */
+  --border: rgba(255, 255, 255, 0.10); /* Glass border */
+  --accent: #00f2ff; /* Neon Cyan */
+  --accent-light: rgba(0, 242, 255, 0.15); /* Neon Glow */
+  --text: #e1e2e7; /* Light grey */
+  --text-muted: #849495;
   --text-bright: #ffffff;
-  --hover: rgba(255, 255, 255, 0.05);
+  --hover: rgba(255, 255, 255, 0.02);
+}
+
+body.dark-theme .top-toolbar,
+body.dark-theme .drawing-sidebar,
+body.dark-theme .watchlist-sidebar,
+body.dark-theme .bottom-bar,
+body.dark-theme .progress-bar-container,
+body.dark-theme .modal-container,
+body.dark-theme .settings-panel,
+body.dark-theme .settings-overlay,
+body.dark-theme .glass-panel {
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+}
+
+.tabular-nums, .price-display, .time-display, .metric-value, .watchlist-item-price, .log-time, td {
+  font-family: 'JetBrains Mono', monospace !important;
 }
 
 body, .top-toolbar, .drawing-sidebar, .watchlist-sidebar, .bottom-bar, .watchlist-item {
@@ -34,7 +51,7 @@ body, .top-toolbar, .drawing-sidebar, .watchlist-sidebar, .bottom-bar, .watchlis
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: 'Outfit', sans-serif;
+  font-family: 'Inter', 'Outfit', sans-serif;
   user-select: none;
 }
 
