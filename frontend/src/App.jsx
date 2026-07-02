@@ -40,16 +40,27 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
-  GripVertical
+  GripVertical,
+
+  // TradingView Pro toolbar icons (new)
+  CandlestickChart,
+  BarChart3,
+  LineChart,
+  LayoutGrid,
+  Clock,
+  Droplets,
+  Sparkles
 } from 'lucide-react';
 
 
 import ChartSettingsModal from './components/ChartSettingsModal';
 import ChartViewport from './components/ChartViewport';
 import WatchlistSidebar from './components/WatchlistSidebar';
-import ValidationWorkspace from './components/ValidationWorkspace';
-import ResearchWorkspace from './components/ResearchWorkspace';
-import DiagnosticsWorkspace from './components/DiagnosticsWorkspace';
+// Lazy-load the heavy workspace tabs so they don't bloat the initial bundle.
+// They only load when the user clicks the corresponding tab.
+const ValidationWorkspace = React.lazy(() => import('./components/ValidationWorkspace'));
+const ResearchWorkspace = React.lazy(() => import('./components/ResearchWorkspace'));
+const DiagnosticsWorkspace = React.lazy(() => import('./components/DiagnosticsWorkspace'));
 
 import { getESTInfo } from './utils/sessions';
 import { aggregateDevelopingCandle } from './utils/replayAggregator';
@@ -317,14 +328,12 @@ export default function App() {
   // Workspace and View Mode States
   const [workspaceTab, setWorkspaceTab] = useState('chart'); // 'chart' | 'validation' | 'research' | 'diagnostics'
   const [debugOverlayFilters, setDebugOverlayFilters] = useState({
-    swings: false,
-    liquidity: false,
-    structure: false,
-    dealingRanges: false,
+    swings: true,
+    liquidity: true,
+    structure: true,
+    dealingRanges: true,
     takenLiqOpacity: 0.25   // alpha for taken (terminated) liquidity lines
   });
-
-  const [syncElapsedSeconds, setSyncElapsedSeconds] = useState(0);
 
   // Algo Candidate select / zones display states
   const [selectedConcept, setSelectedConcept] = useState('');
@@ -351,6 +360,15 @@ export default function App() {
   
   // Right sidebar tab: 'market' | 'research' | 'chat'
   const [rightSidebarTab, setRightSidebarTab] = useState('market');
+
+  // --- AI SWINGS (TradingView Pro toolbar toggle, NEW) ---
+  // When enabled, fetches high-confidence swings from /api/ai/swings and passes
+  // them to ChartViewport as the `aiSwings` prop for overlay rendering.
+  const [aiSwingsEnabled, setAiSwingsEnabled] = useState(false);
+  const [aiSwings, setAiSwings] = useState([]);
+  const [aiSwingsLoading, setAiSwingsLoading] = useState(false);
+  const [aiSwingsSummary, setAiSwingsSummary] = useState(null);
+  const [aiSwingsError, setAiSwingsError] = useState(null);
 
   const [replayMode, setReplayMode] = useState(false);
   const [replayTimeOffset, setReplayTimeOffset] = useState(null);
@@ -664,18 +682,19 @@ export default function App() {
     const tfSec = timeframe * 60;
     const capturedOffset = replayTimeOffset;
 
-    // 1. Candles URL
+    // 1. Candles URL — reduced from 10000 to 3000 for faster initial load.
+    // The sliding-window cache handles subsequent pan/zoom fetches.
     let dataUrl;
     if (capturedOffset) {
-      const startSec = capturedOffset - 8000 * tfSec;
+      const startSec = capturedOffset - 3000 * tfSec;
       const endSec   = capturedOffset + 500  * tfSec;
-      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=10000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=3000&mode=${activeResearchMode}`;
     } else {
-      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=10000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=3000&mode=${activeResearchMode}`;
     }
 
-    // 2. Events URL
-    const limit = 15000;
+    // 2. Events URL — reduced from 15000 to 5000 for faster initial load.
+    const limit = 5000;
     const conceptParam = '';
     let eventsUrl;
     if (capturedOffset) {
@@ -956,26 +975,26 @@ export default function App() {
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
-        horzLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
+        vertLines: { color: gridColor, visible: chartSettings.showGridLines },
+        horzLines: { color: gridColor, visible: chartSettings.showGridLines },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
           visible: true,
           labelVisible: true,
-          color: '#787b86',
+          color: isDarkMode ? '#787b86' : '#9598a1',
           width: 1,
           style: 2,
-          labelBackgroundColor: '#363a45',
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
         },
         horzLine: {
           visible: true,
           labelVisible: true,
-          color: '#787b86',
+          color: isDarkMode ? '#787b86' : '#9598a1',
           width: 1,
           style: 2,
-          labelBackgroundColor: '#363a45',
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
         },
       },
       rightPriceScale: {
@@ -987,18 +1006,21 @@ export default function App() {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         timeVisible: true,
         secondsVisible: false,
+        rightOffset: 5,
         tickMarkFormatter: (time, tickMarkType, locale) => {
           const d = new Date(time * 1000);
           const h = String(d.getUTCHours()).padStart(2, '0');
           const m = String(d.getUTCMinutes()).padStart(2, '0');
-          if (tickMarkType === 0 || tickMarkType === 1) return `${h}:${m}`;
+          // Show HH:MM for intraday, hide seconds always
+          if (tickMarkType === 0) return `${h}:${m}`;
+          if (tickMarkType === 1) return `${h}:${m}`;
           if (tickMarkType === 2) {
-            const mon = String(d.getUTCMonth()+1).padStart(2, '0');
+            const mon = String(d.getUTCMonth() + 1).padStart(2, '0');
             const day = String(d.getUTCDate()).padStart(2, '0');
             return `${mon}-${day}`;
           }
           return `${h}:${m}`;
-        }
+        },
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -1006,9 +1028,8 @@ export default function App() {
 
     chartRef.current = chart;
 
-    // Add Volume pane at the bottom
+    // Add Volume pane at the bottom — colored by candle direction (green up / red down)
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: 'rgba(38, 166, 154, 0.3)',
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
@@ -1150,26 +1171,20 @@ export default function App() {
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
-        horzLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
+        vertLines: { color: gridColor, visible: chartSettings.showGridLines },
+        horzLines: { color: gridColor, visible: chartSettings.showGridLines },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          visible: true,
-          labelVisible: true,
-          color: '#787b86',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#363a45',
+          visible: true, labelVisible: true,
+          color: isDarkMode ? '#787b86' : '#9598a1', width: 1, style: 2,
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
         },
         horzLine: {
-          visible: true,
-          labelVisible: true,
-          color: '#787b86',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#363a45',
+          visible: true, labelVisible: true,
+          color: isDarkMode ? '#787b86' : '#9598a1', width: 1, style: 2,
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
         },
       },
       rightPriceScale: {
@@ -1181,18 +1196,7 @@ export default function App() {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         timeVisible: true,
         secondsVisible: false,
-        tickMarkFormatter: (time, tickMarkType, locale) => {
-          const d = new Date(time * 1000);
-          const h = String(d.getUTCHours()).padStart(2, '0');
-          const m = String(d.getUTCMinutes()).padStart(2, '0');
-          if (tickMarkType === 0 || tickMarkType === 1) return `${h}:${m}`;
-          if (tickMarkType === 2) {
-            const mon = String(d.getUTCMonth()+1).padStart(2, '0');
-            const day = String(d.getUTCDate()).padStart(2, '0');
-            return `${mon}-${day}`;
-          }
-          return `${h}:${m}`;
-        }
+        rightOffset: 5,
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -1437,21 +1441,6 @@ export default function App() {
     };
   }, [isProgressOverlayVisible, activeSymbol, activeResearchMode]);
 
-  // Track elapsed sync seconds when overlay is active
-  useEffect(() => {
-    let interval;
-    if (isProgressOverlayVisible) {
-      interval = setInterval(() => {
-        setSyncElapsedSeconds(prev => prev + 1);
-      }, 1000);
-    } else {
-      setSyncElapsedSeconds(0);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isProgressOverlayVisible]);
-
 
 
   // --- REBUILD OR UPDATE CHART 2 SERIES ---
@@ -1485,14 +1474,10 @@ export default function App() {
           borderDownColor,
           wickUpColor,
           wickDownColor,
-          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 },
         });
       } else if (chartType === 'bar') {
-        series2Ref.current = chart2.addSeries(BarSeries, {
-          upColor,
-          downColor,
-          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
-        });
+        series2Ref.current = chart2.addSeries(BarSeries, { upColor, downColor, priceFormat: { type: 'price', precision: 2, minMove: 0.25 } });
       } else {
         series2Ref.current = chart2.addSeries(LineSeries, { color: themeColor, lineWidth: 2 });
       }
@@ -1535,7 +1520,9 @@ export default function App() {
       volume2Ref.current.setData(displayBars.map(b => ({
         time: b.time,
         value: b.volume,
-        color: b.close >= b.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+        color: b.close >= b.open
+          ? 'rgba(38, 166, 154, 0.5)'
+          : 'rgba(239, 83, 80, 0.5)'
       })));
     }
   };
@@ -1607,13 +1594,13 @@ export default function App() {
           borderDownColor: borderDownColor,
           wickUpColor: wickUpColor,
           wickDownColor: wickDownColor,
-          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 },
         });
       } else if (chartType === 'bar') {
         seriesRef.current = chart.addSeries(BarSeries, {
           upColor: upColor,
           downColor: downColor,
-          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 },
         });
       } else {
         seriesRef.current = chart.addSeries(LineSeries, {
@@ -1664,12 +1651,14 @@ export default function App() {
 
     seriesRef.current.setData(data);
 
-    // Map and load volume
+    // Map and load volume — consistent colors matching candle direction
     if (volumeRef.current) {
       volumeRef.current.setData(displayBars.map(b => ({
         time: b.time,
         value: b.volume,
-        color: b.close >= b.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+        color: b.close >= b.open
+          ? 'rgba(38, 166, 154, 0.5)'   // teal (matches bull candles)
+          : 'rgba(239, 83, 80, 0.5)'    // red (matches bear candles)
       })));
     }
 
@@ -1680,13 +1669,9 @@ export default function App() {
           setTimeout(() => {
             if (chartRef.current && displayBars.length > 0) {
               const timeScale = chartRef.current.timeScale();
-              // Default to 1-month visible window (30 days back from last bar)
-              const lastBarTime = displayBars[displayBars.length - 1].time;
-              const oneMonthAgo = lastBarTime - 30 * 24 * 3600;
-              const fromBar = displayBars.find(b => b.time >= oneMonthAgo) || displayBars[0];
               timeScale.setVisibleRange({
-                from: fromBar.time,
-                to: lastBarTime
+                from: displayBars[Math.max(0, displayBars.length - 150)].time,
+                to: displayBars[displayBars.length - 1].time
               });
             }
           }, 50);
@@ -2132,36 +2117,113 @@ export default function App() {
     };
   }, [chartInitialized, chart2Initialized, seriesUpdateTick, series2UpdateTick, layout]);
 
+  // --- AI SWINGS FETCH (TradingView Pro toolbar toggle) ---
+  // When the AI Swings toggle is enabled, fetch high-confidence swings from
+  // /api/ai/swings?symbol=...&timeframe=...&min_score=60&limit=500 and store
+  // the result in state. The result is passed to ChartViewport as `aiSwings`.
+  useEffect(() => {
+    if (!aiSwingsEnabled || !activeSymbol) {
+      setAiSwings([]);
+      setAiSwingsSummary(null);
+      setAiSwingsError(null);
+      setAiSwingsLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setAiSwingsLoading(true);
+    setAiSwingsError(null);
+
+    fetch(
+      `/api/ai/swings?symbol=${encodeURIComponent(activeSymbol)}&timeframe=${timeframe}&min_score=60&limit=500`,
+      { signal: controller.signal }
+    )
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        if (data.success) {
+          setAiSwings(data.swings || []);
+          setAiSwingsSummary(data.factors_summary || null);
+        } else {
+          setAiSwings([]);
+          setAiSwingsSummary(null);
+          setAiSwingsError(data.error || 'Failed to load AI swings');
+        }
+        setAiSwingsLoading(false);
+      })
+      .catch(err => {
+        if (err.name === 'AbortError') return;
+        setAiSwingsError(err.message);
+        setAiSwings([]);
+        setAiSwingsSummary(null);
+        setAiSwingsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [aiSwingsEnabled, activeSymbol, timeframe]);
+
+  // --- BOTTOM STATUS BAR DERIVED DATA ---
+  // Last price + change vs previous close (uses chart's last bar; respects replay position).
+  const lastBarForStatus = useMemo(() => {
+    if (!allBars || allBars.length === 0) return null;
+    if (replayMode && replayIndex > 0) return allBars[replayIndex - 1];
+    return allBars[allBars.length - 1];
+  }, [allBars, replayMode, replayIndex]);
+
+  const prevBarForStatus = useMemo(() => {
+    if (!allBars || allBars.length < 2) return null;
+    if (replayMode && replayIndex > 1) return allBars[replayIndex - 2];
+    return allBars[allBars.length - 2];
+  }, [allBars, replayMode, replayIndex]);
+
+  const lastPrice = lastBarForStatus?.close ?? null;
+  const priceChange = (lastBarForStatus && prevBarForStatus)
+    ? lastBarForStatus.close - prevBarForStatus.close
+    : null;
+  const priceChangePct = (lastBarForStatus && prevBarForStatus && prevBarForStatus.close !== 0)
+    ? (priceChange / prevBarForStatus.close) * 100
+    : null;
+
+  // Current ICT session label (computed from wall-clock time in EST).
+  const sessionLabel = useMemo(() => {
+    const info = getESTInfo(Math.floor(Date.now() / 1000));
+    if (info.session === 'london') return 'London Session';
+    if (info.session === 'ny-am') return 'NY AM Session';
+    if (info.session === 'ny-pm') return 'NY PM Session';
+    return 'Off-session';
+  }, []);
+
+  // Timeframe label for status bar (e.g. "1m", "5m", "1H", "1D")
+  const tfLabel = useMemo(() => {
+    if (timeframe < 60) return `${timeframe}m`;
+    if (timeframe === 60) return '1H';
+    if (timeframe < 1440) return `${Math.floor(timeframe / 60)}H`;
+    if (timeframe === 1440) return '1D';
+    return `${Math.floor(timeframe / 1440)}D`;
+  }, [timeframe]);
+
   return (
     <div className="app-container">
       {/* TOP TOOLBAR */}
       <header className="top-toolbar">
-        <div className="logo" style={{ marginRight: '8px' }}>
-          PDOS <span>MOS</span>
+        {/* LEFT: Logo wordmark (no emoji) */}
+        <div className="logo">
+          PDOS<span className="logo-dot" />
         </div>
 
-        {/* WORKSPACE TAB SWITCHER */}
-        <div className="workspace-tabs" style={{ display: 'flex', gap: '2px', background: '#1c2030', padding: '2px', borderRadius: '4px', border: '1px solid var(--border)', marginRight: '6px' }}>
+        {/* Workspace segmented control (Chart / Validation / Research / Diagnostics) */}
+        <div className="workspace-segmented">
           {[
-            { id: 'chart', label: '📊 Chart' },
-            { id: 'validation', label: '✔️ Validation' },
-            { id: 'research', label: '🔍 Research' },
-            { id: 'diagnostics', label: '⚙️ Diagnostics' }
+            { id: 'chart', label: 'Chart' },
+            { id: 'validation', label: 'Validation' },
+            { id: 'research', label: 'Research' },
+            { id: 'diagnostics', label: 'Diagnostics' }
           ].map(tab => (
             <button
               key={tab.id}
-              className={`toolbar-btn ${workspaceTab === tab.id ? 'active' : ''}`}
-              style={{
-                padding: '4px 10px',
-                fontSize: '11px',
-                fontWeight: 600,
-                borderRadius: '3px',
-                cursor: 'pointer',
-                border: 'none',
-                background: workspaceTab === tab.id ? 'var(--accent)' : 'transparent',
-                color: '#fff',
-                transition: 'background 0.2s'
-              }}
+              className={`workspace-segmented-btn ${workspaceTab === tab.id ? 'active' : ''}`}
               onClick={() => setWorkspaceTab(tab.id)}
             >
               {tab.label}
@@ -2171,11 +2233,12 @@ export default function App() {
 
         <div className="divider" />
 
-        {/* Symbol Select dropdown */}
+        {/* Symbol selector (dark, no native chrome, custom arrow) */}
         <select
           className="symbol-selector"
           value={activeSymbol}
           onChange={(e) => setActiveSymbol(e.target.value)}
+          title="Symbol"
         >
           {symbols.map(sym => (
             <option key={sym} value={sym}>{sym.toUpperCase()}</option>
@@ -2184,8 +2247,8 @@ export default function App() {
 
         <div className="divider" />
 
-        {/* Timeframe aggregation */}
-        <div className="tf-group">
+        {/* Timeframe ribbon (pill group, 11px, 24px height) */}
+        <div className="tf-ribbon">
           {[
             { label: '1m', val: 1 },
             { label: '3m', val: 3 },
@@ -2208,348 +2271,214 @@ export default function App() {
 
         <div className="divider" />
 
-        {/* Chart type selection */}
-        <div className="tf-group">
-          {[
-            { label: 'Candles', val: 'candle' },
-            { label: 'Bars', val: 'bar' },
-            { label: 'Line', val: 'line' }
-          ].map(item => (
-            <button
-              key={item.val}
-              className={`toolbar-btn ${chartType === item.val ? 'active' : ''}`}
-              onClick={() => setChartType(item.val)}
-            >
-              {item.label}
-            </button>
-          ))}
+        {/* Chart type icons (icon-only, 28px square) */}
+        <div className="toolbar-cluster">
+          <button
+            className={`chart-type-btn ${chartType === 'candle' ? 'active' : ''}`}
+            onClick={() => setChartType('candle')}
+            title="Candlestick Chart"
+          >
+            <CandlestickChart size={14} />
+          </button>
+          <button
+            className={`chart-type-btn ${chartType === 'bar' ? 'active' : ''}`}
+            onClick={() => setChartType('bar')}
+            title="Bar Chart"
+          >
+            <BarChart3 size={14} />
+          </button>
+          <button
+            className={`chart-type-btn ${chartType === 'line' ? 'active' : ''}`}
+            onClick={() => setChartType('line')}
+            title="Line Chart"
+          >
+            <LineChart size={14} />
+          </button>
         </div>
 
-        <div className="divider" />
-
-        {/* Layout Select Toggle */}
-        <button
-          className={`toolbar-btn ${layout === 'split' ? 'active' : ''}`}
-          onClick={() => setLayout(l => l === 'single' ? 'split' : 'single')}
-          title="Toggle Split Screen Layout (Dual Timeframe)"
-        >
-          <Layers size={14} style={{ marginRight: '5px' }} />
-          {layout === 'split' ? 'Split Layout' : 'Single Layout'}
-        </button>
-
-        {layout === 'split' && (
-          <>
-            <div className="divider" />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>TF2:</span>
-              <select
-                className="symbol-selector"
-                style={{ padding: '3px 6px', fontSize: '11px', height: '26px', minWidth: '60px' }}
-                value={timeframe2}
-                onChange={(e) => setTimeframe2(Number(e.target.value))}
-              >
-                {[
-                  { label: '1m', val: 1 },
-                  { label: '3m', val: 3 },
-                  { label: '5m', val: 5 },
-                  { label: '15m', val: 15 },
-                  { label: '30m', val: 30 },
-                  { label: '1H', val: 60 },
-                  { label: '4H', val: 240 },
-                  { label: '1D', val: 1440 }
-                ].map(item => (
-                  <option key={item.val} value={item.val}>{item.label}</option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
-
-        <div className="divider" />
-
-        {/* ICT Sessions Toggle */}
-        <button
-          className={`toolbar-btn ${showSessions ? 'active' : ''}`}
-          onClick={() => setShowSessions(!showSessions)}
-          title="Toggle Midnight/8:30 opens & Session highlights"
-        >
-          <Activity size={14} style={{ marginRight: '5px' }} />
-          ICT Sessions
-        </button>
-
-        <div className="divider" />
-
-        {/* Swings Toggle */}
-        <button
-          className={`toolbar-btn ${debugOverlayFilters.swings ? 'active' : ''}`}
-          onClick={() => setDebugOverlayFilters(f => ({ ...f, swings: !f.swings }))}
-          title="Toggle Swing pivot rendering (STH/ITH/LTH & STL/ITL/LTL)"
-        >
-          Swings
-        </button>
-
-        {/* Liquidity Toggle + taken-opacity slider */}
-        <button
-          className={`toolbar-btn ${debugOverlayFilters.liquidity ? 'active' : ''}`}
-          onClick={() => setDebugOverlayFilters(f => ({ ...f, liquidity: !f.liquidity }))}
-          title="Toggle Liquidity line rendering (BSL / SSL)"
-        >
-          Liquidity
-        </button>
-
-        {/* Dealing Range Toggle */}
-        <button
-          className={`toolbar-btn ${debugOverlayFilters.dealingRanges ? 'active' : ''}`}
-          onClick={() => setDebugOverlayFilters(f => ({ ...f, dealingRanges: !f.dealingRanges }))}
-          title="Toggle Dealing Range boxes (0% / 25% / 50% / 75% / 100% levels)"
-        >
-          Dealing Range
-        </button>
-
-        {debugOverlayFilters.liquidity && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '0 6px',
-              borderLeft: '1px solid var(--border)'
-            }}
-            title="Opacity of taken (terminated) liquidity lines"
-          >
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-              Taken
-            </span>
-            <input
-              id="taken-liq-opacity-slider"
-              type="range"
-              min="0.25"
-              max="0.70"
-              step="0.05"
-              value={debugOverlayFilters.takenLiqOpacity ?? 0.25}
-              onChange={e =>
-                setDebugOverlayFilters(f => ({ ...f, takenLiqOpacity: parseFloat(e.target.value) }))
-              }
-              className="opacity-slider"
-            />
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', minWidth: '26px', textAlign: 'right' }}>
-              {Math.round((debugOverlayFilters.takenLiqOpacity ?? 0.25) * 100)}%
-            </span>
-          </div>
-        )}
-
-        {/* Volume Toggle */}
-        <button
-          className={`toolbar-btn ${showVolume ? 'active' : ''}`}
-          onClick={() => setShowVolume(v => !v)}
-          title="Toggle Volume"
-        >
-          <BarChart2 size={14} style={{ marginRight: '5px' }} />
-          Volume
-        </button>
-
-        {/* Replay Toggle */}
-        <button
-          className={`toolbar-btn ${replayMode ? 'active' : ''}`}
-          onClick={() => {
-            if (replayMode) {
-              handleExitReplay();
-            } else {
-              handleStartReplay();
-            }
-          }}
-          title="Toggle Replay Mode"
-        >
-          <History size={14} style={{ marginRight: '5px' }} />
-          Replay
-        </button>
-
-        {/* Undo / Redo */}
-        <button
-          className="toolbar-icon-btn"
-          disabled={undoStack.length === 0}
-          onClick={handleUndo}
-          title="Undo (Ctrl+Z)"
-        >
-          <Undo2 size={14} style={{ opacity: undoStack.length === 0 ? 0.4 : 1 }} />
-        </button>
-        <button
-          className="toolbar-icon-btn"
-          disabled={redoStack.length === 0}
-          onClick={handleRedo}
-          title="Redo (Ctrl+Y)"
-        >
-          <Redo2 size={14} style={{ opacity: redoStack.length === 0 ? 0.4 : 1 }} />
-        </button>
-
-        {/* Settings button on the right */}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px', alignItems: 'center' }}>
+        {/* RIGHT CLUSTER */}
+        <div className="toolbar-cluster-right">
+          {/* Layout toggle (split / single) */}
           <button
-            className={`toolbar-btn ${syncProgress?.status === 'running' ? 'active' : ''}`}
-            style={{
-              padding: '5px 12px',
-              fontSize: '11px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: syncProgress?.status === 'running' ? 'rgba(0, 82, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-              border: syncProgress?.status === 'running' ? '1px solid rgba(0, 82, 255, 0.4)' : '1px solid var(--border)',
-              color: syncProgress?.status === 'running' ? '#00e5ff' : 'var(--text-bright)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              height: '28px',
-              transition: 'all 0.2s',
-              marginRight: '6px'
-            }}
-            onClick={handleTriggerSync}
-            disabled={syncProgress?.status === 'running'}
-            title="Trigger manual database sync for current symbol"
+            className={`icon-btn-square ${layout === 'split' ? 'active' : ''}`}
+            onClick={() => setLayout(l => l === 'single' ? 'split' : 'single')}
+            title="Toggle Split Screen Layout (Dual Timeframe)"
           >
-            <RefreshCw size={12} className={syncProgress?.status === 'running' ? 'spin' : ''} />
-            {syncProgress?.status === 'running' ? 'Syncing...' : 'Sync Data'}
+            {layout === 'split' ? <Square size={14} /> : <LayoutGrid size={14} />}
           </button>
-          <button 
-            className="toolbar-icon-btn" 
-            onClick={() => setIsDarkMode(v => !v)} 
-            title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
-          >
-            {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
-          </button>
-          {selectedConcept && (
-            <button
-              className={`toolbar-btn ${showAlgoZones ? 'active' : ''}`}
-              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 600, marginRight: '4px' }}
-              onClick={() => setShowAlgoZones(v => !v)}
-              title="Toggle Auto-detected Candidate Zones on Chart"
-            >
-              Zones
-            </button>
-          )}
-          {selectedConcept && selectedConcept.startsWith('liquidity') && (
+
+          {/* TF2 selector (when split layout) */}
+          {layout === 'split' && (
             <select
-              className="symbol-selector"
-              style={{ padding: '5px 8px', fontSize: '12px', height: '28px', minWidth: '140px', marginRight: '6px' }}
-              value={displayMode}
-              onChange={(e) => setDisplayMode(e.target.value)}
-              title="Liquidity Display Mode"
+              className="symbol-selector compact"
+              value={timeframe2}
+              onChange={(e) => setTimeframe2(Number(e.target.value))}
+              title="Secondary Timeframe"
             >
-              <option value="default">Default Mode</option>
-              <option value="consolidated">Consolidated Only</option>
-              <option value="research">Research Mode (All)</option>
+              {[
+                { label: '1m', val: 1 },
+                { label: '3m', val: 3 },
+                { label: '5m', val: 5 },
+                { label: '15m', val: 15 },
+                { label: '30m', val: 30 },
+                { label: '1H', val: 60 },
+                { label: '4H', val: 240 },
+                { label: '1D', val: 1440 }
+              ].map(item => (
+                <option key={item.val} value={item.val}>{item.label}</option>
+              ))}
             </select>
           )}
-          <div className="segmented-control" style={{ display: 'flex', background: '#1c2030', border: '1px solid #2a2e39', borderRadius: '4px', padding: '2px', marginRight: '6px', height: '28px', boxSizing: 'border-box' }}>
+
+          {/* ICT Sessions toggle */}
+          <button
+            className={`icon-btn-square ${showSessions ? 'active' : ''}`}
+            onClick={() => setShowSessions(!showSessions)}
+            title="Toggle Midnight/8:30 opens & Session highlights"
+          >
+            <Clock size={14} />
+          </button>
+
+          {/* Swings toggle */}
+          <button
+            className={`icon-btn-square ${debugOverlayFilters.swings ? 'active' : ''}`}
+            onClick={() => setDebugOverlayFilters(f => ({ ...f, swings: !f.swings }))}
+            title="Toggle Swing pivot rendering (STH/ITH/LTH & STL/ITL/LTL)"
+          >
+            <TrendingUp size={14} />
+          </button>
+
+          {/* Liquidity toggle */}
+          <button
+            className={`icon-btn-square ${debugOverlayFilters.liquidity ? 'active' : ''}`}
+            onClick={() => setDebugOverlayFilters(f => ({ ...f, liquidity: !f.liquidity }))}
+            title="Toggle Liquidity line rendering (BSL / SSL)"
+          >
+            <Droplets size={14} />
+          </button>
+
+          {/* Taken-liquidity opacity slider (only when liquidity overlay enabled) */}
+          {debugOverlayFilters.liquidity && (
+            <div className="opacity-group" title="Opacity of taken (terminated) liquidity lines">
+              <span className="opacity-group-label">Taken</span>
+              <input
+                type="range"
+                min="0.25"
+                max="0.70"
+                step="0.05"
+                value={debugOverlayFilters.takenLiqOpacity ?? 0.25}
+                onChange={e =>
+                  setDebugOverlayFilters(f => ({ ...f, takenLiqOpacity: parseFloat(e.target.value) }))
+                }
+                className="opacity-slider"
+              />
+              <span className="opacity-group-value">
+                {Math.round((debugOverlayFilters.takenLiqOpacity ?? 0.25) * 100)}%
+              </span>
+            </div>
+          )}
+
+          {/* Volume toggle */}
+          <button
+            className={`icon-btn-square ${showVolume ? 'active' : ''}`}
+            onClick={() => setShowVolume(v => !v)}
+            title="Toggle Volume"
+          >
+            <BarChart2 size={14} />
+          </button>
+
+          {/* AI Swings toggle (NEW) */}
+          <button
+            className={`icon-btn-square ${aiSwingsEnabled ? 'active' : ''}`}
+            onClick={() => setAiSwingsEnabled(v => !v)}
+            title="Toggle AI Swings overlay (high-confidence confluence-scored pivots)"
+          >
+            <Sparkles size={14} />
+          </button>
+
+          {/* Replay toggle */}
+          <button
+            className={`icon-btn-square ${replayMode ? 'active' : ''}`}
+            onClick={() => {
+              if (replayMode) {
+                handleExitReplay();
+              } else {
+                handleStartReplay();
+              }
+            }}
+            title="Toggle Replay Mode"
+          >
+            <History size={14} />
+          </button>
+
+          {/* Undo / Redo */}
+          <button
+            className="icon-btn-square"
+            disabled={undoStack.length === 0}
+            onClick={handleUndo}
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 size={14} />
+          </button>
+          <button
+            className="icon-btn-square"
+            disabled={redoStack.length === 0}
+            onClick={handleRedo}
+            title="Redo (Ctrl+Y)"
+          >
+            <Redo2 size={14} />
+          </button>
+
+          {/* View mode segmented (Narrative / Analysis / Debug) */}
+          <div className="viewmode-segmented">
             <button
-              className={`segmented-btn ${viewMode === 'narrative' ? 'active' : ''}`}
-              style={{
-                background: viewMode === 'narrative' ? 'var(--accent)' : 'none',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '0 10px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                height: '100%',
-                transition: 'background 0.2s'
-              }}
+              className={`viewmode-btn ${viewMode === 'narrative' ? 'active' : ''}`}
               onClick={() => {
                 setViewMode('narrative');
                 setNarrativeMode(true);
                 setShowAlgoZones(true);
               }}
+              title="Narrative view mode"
             >
               Narrative
             </button>
             <button
-              className={`segmented-btn ${viewMode === 'analysis' ? 'active' : ''}`}
-              style={{
-                background: viewMode === 'analysis' ? 'var(--accent)' : 'none',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '0 10px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                height: '100%',
-                transition: 'background 0.2s'
-              }}
+              className={`viewmode-btn ${viewMode === 'analysis' ? 'active' : ''}`}
               onClick={() => {
                 setViewMode('analysis');
                 setNarrativeMode(false);
                 setShowAlgoZones(true);
               }}
+              title="Analysis view mode"
             >
               Analysis
             </button>
             <button
-              className={`segmented-btn ${viewMode === 'debug' ? 'active' : ''}`}
-              style={{
-                background: viewMode === 'debug' ? '#ff9100' : 'none',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '0 10px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                height: '100%',
-                transition: 'background 0.2s'
-              }}
+              className={`viewmode-btn debug ${viewMode === 'debug' ? 'active' : ''}`}
               onClick={() => {
                 setViewMode('debug');
                 setNarrativeMode(false);
                 setShowAlgoZones(true);
               }}
+              title="Debug view mode"
             >
               Debug
             </button>
           </div>
 
+          {/* Layers dropdown (analysis view only) */}
           {viewMode === 'analysis' && (
-            <div style={{ position: 'relative', marginRight: '6px' }}>
+            <div className="layers-wrap">
               <button
-                className="toolbar-btn"
-                style={{
-                  height: '28px',
-                  padding: '0 10px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  background: '#1c2030',
-                  border: '1px solid #2a2e39',
-                  color: '#ffb74d',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
+                className="layers-btn"
                 onClick={() => setIsLayersDropdownOpen(!isLayersDropdownOpen)}
+                title="Toggle analysis layer visibility"
               >
                 <span>Layers</span>
-                <span style={{ fontSize: '9px' }}>{isLayersDropdownOpen ? '▲' : '▼'}</span>
+                <ChevronDown size={10} />
               </button>
-              
               {isLayersDropdownOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '32px',
-                    right: 0,
-                    background: '#0f1115',
-                    border: '1px solid #2a2e39',
-                    borderRadius: '4px',
-                    boxShadow: '0 6px 16px rgba(0,0,0,0.85)',
-                    zIndex: 1010,
-                    padding: '10px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                    minWidth: '140px'
-                  }}
-                >
+                <div className="layers-menu">
                   {[
                     { key: 'swings', label: 'Swings' },
                     { key: 'liquidity', label: 'Liquidity' },
@@ -2558,7 +2487,7 @@ export default function App() {
                     { key: 'intent', label: 'Intent' },
                     { key: 'delivery', label: 'Delivery' }
                   ].map(item => (
-                    <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: '#b2b5be', cursor: 'pointer', userSelect: 'none' }}>
+                    <label key={item.key}>
                       <input
                         type="checkbox"
                         checked={analysisLayers[item.key]}
@@ -2568,7 +2497,6 @@ export default function App() {
                             [item.key]: e.target.checked
                           }));
                         }}
-                        style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
                       />
                       {item.label}
                     </label>
@@ -2577,10 +2505,48 @@ export default function App() {
               )}
             </div>
           )}
-          {/* RESEARCH MODE CONTROLS */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRight: '1px solid rgba(255,255,255,0.08)', paddingRight: '10px', marginRight: '6px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Dataset:</span>
+
+          {/* Zones toggle (only when a concept is selected) */}
+          {selectedConcept && (
+            <button
+              className={`toolbar-btn ${showAlgoZones ? 'active' : ''}`}
+              onClick={() => setShowAlgoZones(v => !v)}
+              title="Toggle Auto-detected Candidate Zones on Chart"
+            >
+              Zones
+            </button>
+          )}
+
+          {/* Liquidity display mode select (only when liquidity concept is selected) */}
+          {selectedConcept && selectedConcept.startsWith('liquidity') && (
             <select
+              className="symbol-selector compact"
+              value={displayMode}
+              onChange={(e) => setDisplayMode(e.target.value)}
+              title="Liquidity Display Mode"
+            >
+              <option value="default">Default</option>
+              <option value="consolidated">Consolidated</option>
+              <option value="research">Research</option>
+            </select>
+          )}
+
+          {/* Sync Data button */}
+          <button
+            className={`sync-btn ${syncProgress?.status === 'running' ? 'running' : ''}`}
+            onClick={handleTriggerSync}
+            disabled={syncProgress?.status === 'running'}
+            title="Trigger manual database sync for current symbol"
+          >
+            <RefreshCw size={12} className={syncProgress?.status === 'running' ? 'spin' : ''} />
+            {syncProgress?.status === 'running' ? 'Syncing' : 'Sync'}
+          </button>
+
+          {/* Dataset selector + bar-limit selector */}
+          <div className="dataset-group">
+            <span className="dataset-label">Data</span>
+            <select
+              className="symbol-selector compact"
               value={activeResearchMode}
               onChange={(e) => {
                 const val = e.target.value;
@@ -2588,23 +2554,14 @@ export default function App() {
                 slidingWindowCache1.clear();
                 slidingWindowCache2.clear();
               }}
-              style={{
-                background: '#131722',
-                border: '1px solid #2a2e39',
-                color: '#fff',
-                fontSize: '11px',
-                padding: '4px 6px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                outline: 'none'
-              }}
+              title="Dataset mode"
             >
-              <option value="interactive">Interactive Mode</option>
-              <option value="batch">Batch Research Mode</option>
+              <option value="interactive">Interactive</option>
+              <option value="batch">Batch</option>
             </select>
-
             {activeResearchMode === 'interactive' && (
               <select
+                className="symbol-selector compact"
                 value={limitBarsInteractive}
                 onChange={(e) => {
                   const val = parseInt(e.target.value, 10);
@@ -2612,75 +2569,43 @@ export default function App() {
                   slidingWindowCache1.clear();
                   slidingWindowCache2.clear();
                 }}
-                style={{
-                  background: '#131722',
-                  border: '1px solid #2a2e39',
-                  color: '#fff',
-                  fontSize: '11px',
-                  padding: '4px 6px',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  outline: 'none'
-                }}
+                title="Bar history limit"
               >
-                <option value={20000}>2 Weeks (20k bars)</option>
-                <option value={40000}>1 Month (40k bars)</option>
-                <option value={120000}>3 Months (120k bars)</option>
-                <option value={80000}>Custom (80k bars)</option>
+                <option value={20000}>2W</option>
+                <option value={40000}>1M</option>
+                <option value={80000}>3M</option>
+                <option value={120000}>4M</option>
               </select>
             )}
-
-            <button
-              onClick={async () => {
-                try {
-                  const limit = activeResearchMode === 'interactive' ? limitBarsInteractive : '';
-                  const url = `/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limit}`;
-                  
-                  setSyncProgress({
-                    status: 'processing',
-                    current_chunk: 0,
-                    total_chunks: 0,
-                    bars_processed: 0,
-                    elapsed_ms: 0,
-                    eta_ms: 0
-                  });
-                  setIsProgressOverlayVisible(true);
-
-                  const res = await fetch(url);
-                  const data = await res.json();
-                  console.log("Trigger sync response:", data);
-                } catch (e) {
-                  console.error(e);
-                }
-              }}
-              style={{
-                background: 'var(--accent)',
-                color: '#000',
-                border: 'none',
-                padding: '4px 8px',
-                borderRadius: '4px',
-                fontSize: '11px',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              Sync Run
-            </button>
           </div>
 
-          <button className="toolbar-icon-btn" onClick={() => setIsSettingsOpen(true)} title="Chart Settings">
+          {/* Theme toggle */}
+          <button
+            className="icon-btn-square"
+            onClick={() => setIsDarkMode(v => !v)}
+            title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+
+          {/* Settings */}
+          <button
+            className="icon-btn-square"
+            onClick={() => setIsSettingsOpen(true)}
+            title="Chart Settings"
+          >
             <Settings size={14} />
           </button>
-          <button className="btn-primary" style={{ padding: '6px 14px', fontSize: '12px' }}>
-            Publish
-          </button>
+
+          {/* Publish (decorative accent button) */}
+          <button className="publish-btn">Publish</button>
         </div>
       </header>
 
       {/* MAIN CONTAINER */}
-      <div className="main-content" style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
-        <div style={{ display: workspaceTab === 'chart' ? 'flex' : 'none', flex: 1, height: '100%', width: '100%', overflow: 'hidden' }}>
-            {/* LEFT DRAWING SIDEBAR */}
+      <div className="main-content">
+        <div className="chart-workspace" style={{ display: workspaceTab === 'chart' ? 'flex' : 'none' }}>
+            {/* LEFT DRAWING RAIL (48px icon column, tooltips on hover) */}
             <aside className="drawing-sidebar">
               <button
                 className={`sidebar-btn ${activeTool === null ? 'active' : ''}`}
@@ -2722,6 +2647,8 @@ export default function App() {
                 <Layers size={16} />
               </button>
 
+              <div className="rail-divider" />
+
               <button
                 className={`sidebar-btn ${activeTool === 'text' ? 'active' : ''}`}
                 onClick={() => setActiveTool('text')}
@@ -2751,7 +2678,7 @@ export default function App() {
                 onClick={() => setActiveTool('position-long')}
                 data-tooltip="Long Position"
               >
-                <TrendingUp size={16} style={{ color: '#089981' }} />
+                <TrendingUp size={16} className="position-long-icon" />
               </button>
 
               <button
@@ -2759,7 +2686,7 @@ export default function App() {
                 onClick={() => setActiveTool('position-short')}
                 data-tooltip="Short Position"
               >
-                <TrendingDown size={16} style={{ color: '#f23645' }} />
+                <TrendingDown size={16} className="position-short-icon" />
               </button>
 
               <button
@@ -2770,7 +2697,7 @@ export default function App() {
                 <Compass size={16} />
               </button>
 
-              <div className="divider" style={{ width: '20px', height: '1px', margin: '6px 0' }} />
+              <div className="rail-divider" />
 
               {/* Magnet toggle */}
               <button
@@ -2778,7 +2705,7 @@ export default function App() {
                 onClick={() => setMagnetMode(!magnetMode)}
                 data-tooltip={magnetMode ? "Disable Magnet Mode" : "Enable Magnet Mode (Snaps to High/Low)"}
               >
-                <Magnet size={16} style={{ color: magnetMode ? '#00e5ff' : 'inherit' }} />
+                <Magnet size={16} />
               </button>
 
               {/* Lock all toggle */}
@@ -2787,7 +2714,7 @@ export default function App() {
                 onClick={() => setLockDrawings(!lockDrawings)}
                 data-tooltip={lockDrawings ? "Unlock all drawings" : "Lock all drawings"}
               >
-                {lockDrawings ? <Lock size={16} style={{ color: '#ff9100' }} /> : <Unlock size={16} />}
+                {lockDrawings ? <Lock size={16} /> : <Unlock size={16} />}
               </button>
 
               {/* Hide/Show drawings */}
@@ -2895,6 +2822,8 @@ export default function App() {
               handleScrollRight={handleScrollRight}
               handleResetScale={handleResetScale}
               saveExplorerLabel={saveExplorerLabel}
+              aiSwings={aiSwings}
+              aiSwingsEnabled={aiSwingsEnabled}
             />
 
             <WatchlistSidebar 
@@ -2928,40 +2857,47 @@ export default function App() {
           </div>
 
         {workspaceTab === 'validation' && (
-          <ValidationWorkspace
-            activeSymbol={activeSymbol}
-            onSelectEvent={(ev) => {
-              setSelectedAlgoCandidate(ev);
-              setWorkspaceTab('chart');
-              setRightSidebarTab('market');
-            }}
-            onJumpToTime={handleJumpToTime}
-            onSwitchTab={setWorkspaceTab}
-          />
+          <React.Suspense fallback={<div className="chart-loading-skeleton"><div className="spinner" />Loading Validation Workspace…</div>}>
+            <ValidationWorkspace
+              activeSymbol={activeSymbol}
+              onSelectEvent={(ev) => {
+                setSelectedAlgoCandidate(ev);
+                setWorkspaceTab('chart');
+                setRightSidebarTab('market');
+              }}
+              onJumpToTime={handleJumpToTime}
+              onSwitchTab={setWorkspaceTab}
+            />
+          </React.Suspense>
         )}
 
         {workspaceTab === 'research' && (
-          <ResearchWorkspace
-            activeSymbol={activeSymbol}
-            onSelectEvent={(ev) => {
-              setSelectedAlgoCandidate(ev);
-              setWorkspaceTab('chart');
-              setRightSidebarTab('market');
-            }}
-            onJumpToTime={handleJumpToTime}
-            onSwitchTab={setWorkspaceTab}
-          />
+          <React.Suspense fallback={<div className="chart-loading-skeleton"><div className="spinner" />Loading Research Workspace…</div>}>
+            <ResearchWorkspace
+              activeSymbol={activeSymbol}
+              onSelectEvent={(ev) => {
+                setSelectedAlgoCandidate(ev);
+                setWorkspaceTab('chart');
+                setRightSidebarTab('market');
+              }}
+              onJumpToTime={handleJumpToTime}
+              onSwitchTab={setWorkspaceTab}
+            />
+          </React.Suspense>
         )}
 
         {workspaceTab === 'diagnostics' && (
-          <DiagnosticsWorkspace activeSymbol={activeSymbol} />
+          <React.Suspense fallback={<div className="chart-loading-skeleton"><div className="spinner" />Loading Diagnostics…</div>}>
+            <DiagnosticsWorkspace activeSymbol={activeSymbol} />
+          </React.Suspense>
         )}
       </div>
 
-      {/* BOTTOM STATUS BAR */}
+      {/* BOTTOM STATUS BAR (24px tall) */}
       <footer className="bottom-bar">
+        {/* LEFT: time-scale quick-zoom + connection + symbol + timeframe */}
         <div className="bottom-left-group">
-          <span>Time Scale:</span>
+          <span className="bottom-tf-label">Range</span>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(1)}>1D</button>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(5)}>5D</button>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(30)}>1M</button>
@@ -2969,13 +2905,63 @@ export default function App() {
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(180)}>6M</button>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(365)}>1Y</button>
           <button className="bottom-tf-btn" onClick={() => chartRef.current?.timeScale().fitContent()}>All</button>
-        </div>
-        <div className="bottom-right-group">
-          <span>Timezone: America/New_York (EST)</span>
+          <span className="status-divider" />
           <div className="status-indicator">
             <span className="status-dot" />
-            <span>Local Database Connected</span>
+            <span>Connected</span>
           </div>
+          <span className="status-divider" />
+          <span className="status-label">Sym</span>
+          <span className="status-value">{activeSymbol ? activeSymbol.replace('_HISTORICAL_DATA', '').replace('_', ' ').toUpperCase() : '—'}</span>
+          <span className="status-divider" />
+          <span className="status-label">TF</span>
+          <span className="status-value">{tfLabel}</span>
+        </div>
+
+        {/* CENTER: last price + change (last close vs prev close) */}
+        <div className="bottom-center-group">
+          {lastPrice !== null ? (
+            <>
+              <span className="status-label">Last</span>
+              <span className="status-mono">{lastPrice.toFixed(2)}</span>
+              {priceChange !== null && (
+                <span className={`status-value ${priceChange >= 0 ? 'up' : 'dn'}`}>
+                  {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}
+                </span>
+              )}
+              {priceChangePct !== null && (
+                <span className={`status-value ${priceChangePct >= 0 ? 'up' : 'dn'}`}>
+                  ({priceChangePct >= 0 ? '+' : ''}{priceChangePct.toFixed(2)}%)
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="status-label">No data</span>
+          )}
+        </div>
+
+        {/* RIGHT: AI insights ticker (when AI swings enabled) OR session info */}
+        <div className="bottom-right-group">
+          {aiSwingsEnabled ? (
+            <span className={`status-ai-badge ${aiSwingsLoading ? 'loading' : ''}`}>
+              <Sparkles size={11} />
+              {aiSwingsLoading
+                ? 'AI: Loading swings…'
+                : aiSwingsError
+                  ? `AI: ${aiSwingsError}`
+                  : aiSwings.length > 0
+                    ? `AI: ${aiSwings.length} high-confidence swings detected`
+                    : 'AI: No swings detected (min_score=60)'}
+            </span>
+          ) : (
+            <>
+              <span className="status-label">Session</span>
+              <span className="status-value">{sessionLabel}</span>
+              <span className="status-divider" />
+              <span className="status-label">TZ</span>
+              <span className="status-value">America/New_York</span>
+            </>
+          )}
         </div>
       </footer>
 
@@ -3048,10 +3034,6 @@ export default function App() {
                   </strong>
                 </div>
               )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
-                <span>Elapsed Time:</span>
-                <strong style={{ color: '#fff' }}>{syncElapsedSeconds} seconds</strong>
-              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>Estimated Time Remaining:</span>
                 <strong style={{ color: '#fff' }}>

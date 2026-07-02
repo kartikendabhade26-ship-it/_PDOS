@@ -1,0 +1,198 @@
+================================================================================
+PDOS Rendering Fixes — Unified Diff (2 files modified)
+================================================================================
+
+This diff shows the exact changes made to fix 6 rendering-layer bugs.
+No other files were modified. No market logic, registry, swing math, or
+replay rules were touched.
+
+================================================================================
+FILE 1: src/components/DrawingCanvas/RenderScheduler.js
+================================================================================
+
+--- a/RenderScheduler.js  (before)
++++ b/RenderScheduler.js  (after)
+@@ -1,30 +1,73 @@
+ /**
+  * RenderScheduler.js
+  * Coalesces rendering requests from multiple sources into a single requestAnimationFrame render pass.
+  * Marks canvas layers as dirty and handles execution.
++ *
++ * Rev 2 changes (rendering-layer hardening, no market-logic impact):
++ *   - Tracks the rAF handle so it can be cancelled on destroy(). Prevents stale
++ *     render passes against detached canvases after the component unmounts.   [Bug 1]
++ *   - Adds a preRender hook so per-frame state updates (replay terminations,
++ *     narrative context) run exactly once per frame instead of once per layer. [Bug 3]
+  */
+ export default class RenderScheduler {
+   constructor(layerManager) {
+     this.layerManager = layerManager;
+     this.scheduled = false;
++    this.rafId = null;          // [Bug 1] track rAF handle for cancellation
++    this.preRenderFns = [];     // [Bug 3] per-frame state-update hooks
++  }
++
++  // [Bug 3] Register a function to run once at the start of each scheduled
++  // frame, before any dirty layer is rendered. Returns an unsubscribe fn.
++  addPreRender(fn) {
++    this.preRenderFns.push(fn);
++    return () => {
++      const i = this.preRenderFns.indexOf(fn);
++      if (i >= 0) this.preRenderFns.splice(i, 1);
++    };
+   }
+
+   markDirty(layerName) {
+     this.layerManager.setDirty(layerName, true);
+     this.schedule();
+   }
+
+   markAllDirty() {
+     this.layerManager.setAllDirty();
+     this.schedule();
+   }
+
+   schedule() {
+     if (this.scheduled) return;
+     this.scheduled = true;
+-    requestAnimationFrame(() => {
++    this.rafId = requestAnimationFrame(() => {
+       this.scheduled = false;
++      this.rafId = null;
++      // [Bug 3] Run pre-render hooks once per frame
++      for (let i = 0; i < this.preRenderFns.length; i++) {
++        try { this.preRenderFns[i](); } catch (e) { /* swallow */ }
++      }
+       this.layerManager.renderDirty();
+     });
+   }
++
++  // [Bug 1] Cancel any pending rAF and detach preRender hooks.
++  // Call on component unmount to prevent stale renders.
++  destroy() {
++    if (this.rafId != null) {
++      cancelAnimationFrame(this.rafId);
++      this.rafId = null;
++    }
++    this.scheduled = false;
++    this.preRenderFns = [];
++  }
+ }
+
+
+================================================================================
+FILE 2: src/components/DrawingCanvas.jsx
+================================================================================
+
+--- a/DrawingCanvas.jsx  (before)
++++ b/DrawingCanvas.jsx  (after)
+
+[6 changes — see inline comments marked "Bug N fix:" in the file]
+
+CHANGE 1 (Bug 1): Unmount cleanup cancels pending rAF
+  In the isMountedRef mount/unmount effect:
+  +     return () => {
+  +       isMountedRef.current = false;
+  +       // Bug 1 fix: cancel any pending rAF
+  +       schedulerRef.current.destroy();
+  +     };
+
+CHANGE 2 (Bug 2): Stable memoized ref callbacks replace inline arrow
+  + const renderLayerContentRef = useRef(null);
+  + const layerRefCallbacks = useMemo(
+  +   () => layersConfig.map((layer) => {
+  +     const { name, zIndex } = layer;
+  +     const cb = (el) => {
+  +       if (el) {
+  +         layerManagerRef.current.registerLayer(name, el,
+  +           (ctx, canvas) => renderLayerContentRef.current(name, ctx, canvas), zIndex);
+  +         if (name === 'InteractiveLayer') canvasRef.current = el;
+  +       } else {
+  +         layerManagerRef.current.unregisterLayer(name);
+  +       }
+  +     };
+  +     return cb;
+  +   }),
+  +   [layersConfig]
+  + );
+  ...
+  - ref={el => {
+  -   if (el) {
+  -     layerManagerRef.current.registerLayer(layer.name, el,
+  -       (ctx, canvas) => renderLayerContent(layer.name, ctx, canvas), layer.zIndex);
+  -     if (layer.name === 'InteractiveLayer') canvasRef.current = el;
+  -   } else {
+  -     layerManagerRef.current.unregisterLayer(layer.name);
+  -   }
+  - }}
+  + ref={layerRefCallbacks[layerIdx]}
+
+  Also added after renderLayerContent definition:
+  + renderLayerContentRef.current = renderLayerContent;
+
+CHANGE 3 (Bug 3): Per-frame state updates hoisted to preRender hook
+  + const updateReplayTerminationsRef = useRef(null);
+  + const updateNarrativeContextRef = useRef(null);
+  + useEffect(() => {
+  +   const unsub = schedulerRef.current.addPreRender(() => {
+  +     if (updateReplayTerminationsRef.current) updateReplayTerminationsRef.current();
+  +     if (updateNarrativeContextRef.current) updateNarrativeContextRef.current();
+  +   });
+  +   return unsub;
+  + }, []);
+  ...
+  - const renderLayerContent = (name, ctx, canvas) => {
+  -   updateReplayTerminations();
+  -   updateNarrativeContext();
+  -   if (name === 'GridLayer') {
+  + const renderLayerContent = (name, ctx, canvas) => {
+  +   if (name === 'GridLayer') {
+  ...
+  + updateReplayTerminationsRef.current = updateReplayTerminations;
+  + updateNarrativeContextRef.current = updateNarrativeContext;
+
+CHANGE 4 (Bug 4): O(1) candidate lookup map for checkIsFaded
+  + const candidatesByIdRef = useRef(new Map());
+  + useEffect(() => {
+  +   const map = new Map();
+  +   const cands = algoCandidates || [];
+  +   for (let i = 0; i < cands.length; i++) {
+  +     const c = cands[i];
+  +     if (c && c.id != null) map.set(c.id, c);
+  +   }
+  +   candidatesByIdRef.current = map;
+  + }, [algoCandidates]);
+  ...
+  - const focusRangeObj = algoCandidatesRef.current.find(c => c.id === focusRangeId);
+  + const focusRangeObj = candidatesByIdRef.current.get(focusRangeId) ||
+  +                       algoCandidatesRef.current.find(c => c.id === focusRangeId);
+
+CHANGE 5 (Bug 5): Dedupe async viewport invalidate
+  + let asyncInvalidatePending = false;
+    const handleViewportChange = () => {
+      projectionServiceRef.current.invalidateCache();
+      schedulerRef.current.markAllDirty();
+  -   setTimeout(() => {
+  -     projectionServiceRef.current.invalidateCache();
+  -     schedulerRef.current.markAllDirty();
+  -   }, 0);
+  +   if (!asyncInvalidatePending) {
+  +     asyncInvalidatePending = true;
+  +     setTimeout(() => {
+  +       asyncInvalidatePending = false;
+  +       if (!isMountedRef.current) return;
+  +       projectionServiceRef.current.invalidateCache();
+  +       schedulerRef.current.markAllDirty();
+  +     }, 0);
+  +   }
+    };
+  (Same pattern applied to updateCanvasSize with asyncResizeInvalidatePendingRef)
+
+CHANGE 6 (Bug 6): Dead code removed
+  - const drawAlgoCandidate = (ctx, cand, isSelected, labelOccupied) => {
+  -   ... (80 lines, full duplicate of drawAlgoCandidateWithCtx, never called)
+  - };
+
+================================================================================
+END OF DIFF
+================================================================================

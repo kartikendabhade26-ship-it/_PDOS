@@ -398,7 +398,10 @@ export default function DrawingCanvas({
 
     const dpr = window.devicePixelRatio || 1;
     const newWidth = container.clientWidth;
-    const newHeight = container.clientHeight;
+    // Subtract the 28px OHLCV header so the canvas matches the actual chart area
+    // (the overlay container is positioned at top:28px with height calc(100% - 28px))
+    const HEADER_HEIGHT = 28;
+    const newHeight = container.clientHeight - HEADER_HEIGHT;
 
     const backingWidth = Math.round(newWidth * dpr);
     const backingHeight = Math.round(newHeight * dpr);
@@ -459,6 +462,53 @@ export default function DrawingCanvas({
       console.warn('[DrawingCanvas] Error subscribing to visible logical range change:', e);
     }
 
+    // ─── PRICE-SCALE DRAG DETECTION ─────────────────────────────────────────
+    // lightweight-charts v5 does NOT expose a "price scale changed" event, so
+    // when the user drags the right-hand price axis to manually scale it, the
+    // projection cache (which stores pixel Y coordinates keyed by price) goes
+    // stale and overlays (swings, FVGs, OBs, liquidity lines) drift off the
+    // candles. Polling getVisibleRange() on every animation frame is cheap
+    // (it's a cached getter) and lets us invalidate the cache the moment the
+    // price range changes.
+    let lastPriceRange = null;
+    let priceScaleRafId = null;
+    let stableFrames = 0;  // Count consecutive frames with no change
+    try {
+      lastPriceRange = chart.priceScale('right').getVisibleRange();
+    } catch (e) {}
+    const pollPriceScale = () => {
+      if (!isMountedRef.current) return;
+      try {
+        const currentRange = chart.priceScale('right').getVisibleRange();
+        if (currentRange && lastPriceRange) {
+          if (currentRange.from !== lastPriceRange.from || currentRange.to !== lastPriceRange.to) {
+            lastPriceRange = currentRange;
+            stableFrames = 0;
+            // Price scale is actively moving (user is dragging). Disable the
+            // projection cache so every render frame hits the live chart API
+            // — this guarantees markers track candles in real-time during the
+            // drag gesture with zero staleness.
+            projectionServiceRef.current.setCacheEnabled(false);
+            schedulerRef.current.markAllDirty();
+          } else {
+            stableFrames++;
+            // After 3 stable frames (~50ms at 60fps), the drag is over.
+            // Re-enable the cache for normal performance.
+            if (stableFrames === 3) {
+              projectionServiceRef.current.setCacheEnabled(true);
+              schedulerRef.current.markAllDirty();
+            }
+          }
+        } else if (currentRange && !lastPriceRange) {
+          lastPriceRange = currentRange;
+        } else if (!currentRange && lastPriceRange) {
+          lastPriceRange = null;
+        }
+      } catch (e) {}
+      priceScaleRafId = requestAnimationFrame(pollPriceScale);
+    };
+    priceScaleRafId = requestAnimationFrame(pollPriceScale);
+
     // Set canvas size immediately
     updateCanvasSize();
 
@@ -483,38 +533,8 @@ export default function DrawingCanvas({
     window.addEventListener('keydown', handleKeyDown, { passive: true });
     window.addEventListener('keyup', handleKeyUp, { passive: true });
 
-    // Listen for window devicePixelRatio changes (DPR Mismatch Fix)
-    let dprMediaQuery = null;
-    const handleDprChange = () => {
-      updateCanvasSize();
-      schedulerRef.current.markAllDirty();
-      setupDprListener(); // re-subscribe for the new resolution boundary
-    };
-
-    const setupDprListener = () => {
-      if (dprMediaQuery) {
-        try {
-          dprMediaQuery.removeEventListener('change', handleDprChange);
-        } catch (e) {
-          try { dprMediaQuery.removeListener(handleDprChange); } catch (_) {}
-        }
-      }
-      const dpr = window.devicePixelRatio || 1;
-      dprMediaQuery = window.matchMedia(`(resolution: ${dpr}dppx)`);
-      try {
-        dprMediaQuery.addEventListener('change', handleDprChange);
-      } catch (e) {
-        try { dprMediaQuery.addListener(handleDprChange); } catch (_) {}
-      }
-    };
-
-    setupDprListener();
-
     // Call draw immediately
     schedulerRef.current.markAllDirty();
-    if (onRenderCompleted) {
-      setTimeout(onRenderCompleted, 100);
-    }
 
     return () => {
       try {
@@ -522,14 +542,11 @@ export default function DrawingCanvas({
           chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleViewportChange);
         }
       } catch (e) {}
-      observer.disconnect();
-      if (dprMediaQuery) {
-        try {
-          dprMediaQuery.removeEventListener('change', handleDprChange);
-        } catch (e) {
-          try { dprMediaQuery.removeListener(handleDprChange); } catch (_) {}
-        }
+      if (priceScaleRafId !== null) {
+        cancelAnimationFrame(priceScaleRafId);
+        priceScaleRafId = null;
       }
+      observer.disconnect();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
@@ -590,19 +607,25 @@ export default function DrawingCanvas({
 
           if (!isDrawingVisible(shape, timeframe)) return;
 
-          if (shape.type === 'horizontal-line' || shape.type === 'ray') {
+          if (shape.type === 'horizontal-line') {
+            // Horizontal lines use the native PriceLine (renders line + axis label).
+            // Rays do NOT use native PriceLine — the custom canvas drawing handles
+            // the ray (extends into price scale area + draws price label box).
+            // Creating a native PriceLine for rays causes a "short line" bug where
+            // the native line only spans the pane (not the price scale) and creates
+            // a visible gap at the right edge.
             const id = shape.id;
             if (!id) return;
             activeIds.add(id);
 
             const price = shape.points[0].price;
             const color = shape.color || '#2962ff';
-            
+
             let lineStyle = 0; // Solid
             if (shape.lineStyle === 'dashed') lineStyle = 1;
             else if (shape.lineStyle === 'dotted') lineStyle = 2;
 
-            const lineWidth = shape.type === 'horizontal-line' ? (shape.width || 2) : 0;
+            const lineWidth = shape.width || 2;
 
             const options = {
               price,
@@ -620,6 +643,15 @@ export default function DrawingCanvas({
             } else {
               priceLine.applyOptions(options);
             }
+          } else if (shape.type === 'ray') {
+            // Rays are rendered entirely by the custom canvas drawing (DrawingsLayer).
+            // Do NOT create a native PriceLine — it would render a second, shorter
+            // line that only spans the pane area, creating a visual gap at the right
+            // edge. The custom drawing extends the ray into the price scale area and
+            // draws the price label box. Just track the ID so cleanup works.
+            const id = shape.id;
+            if (!id) return;
+            activeIds.add(id);
           }
         });
       }
@@ -869,6 +901,7 @@ export default function DrawingCanvas({
         if (shape.type === 'horizontal-line') {
           if (Math.abs(y - coords[0].y) < 6) hits.push({ type: 'body', shapeIdx: sIdx });
         } else if (shape.type === 'ray') {
+          // Ray spans the full chart width, so hit-test only the Y proximity
           if (Math.abs(y - coords[0].y) < 6) hits.push({ type: 'body', shapeIdx: sIdx });
         } else if (shape.type === 'rectangle' && coords.length >= 2) {
           const canvas = canvasRef.current;
@@ -1295,7 +1328,10 @@ export default function DrawingCanvas({
     if (!canvas || !chartContainer) return { paneWidth: 0, paneHeight: 0, priceScaleWidth: 0, timeScaleHeight: 0 };
 
     const width = chartContainer.clientWidth;
-    const height = chartContainer.clientHeight;
+    // Subtract the 28px header padding so paneHeight matches the actual chart canvas
+    // (the overlay canvases are positioned at top:28px with height calc(100% - 28px))
+    const HEADER_HEIGHT = 28;
+    const height = chartContainer.clientHeight - HEADER_HEIGHT;
 
     const canvases = chartContainer.querySelectorAll('canvas');
     let priceScaleWidth = 62; // fallback default
@@ -1314,7 +1350,7 @@ export default function DrawingCanvas({
     });
 
     const paneWidth = width - priceScaleWidth;
-    const paneHeight = height - timeScaleHeight - 28;
+    const paneHeight = height - timeScaleHeight;
 
     return { paneWidth, paneHeight, priceScaleWidth, timeScaleHeight };
   };
@@ -2134,42 +2170,25 @@ export default function DrawingCanvas({
   useEffect(() => {
     if (!chart || !series || !chartContainer) return;
 
-    let stableFrames = 0;
-    let lastPriceRange = { from: 0, to: 0 };
+    let lastTopPrice = null;
+    let lastBottomPrice = null;
     let animationFrameId;
 
     const checkPriceScale = () => {
-      if (!isMountedRef.current) return;
-      if (chart && series) {
+      if (series) {
         try {
-          const currentRange = chart.priceScale('right').getVisibleRange();
-          if (currentRange) {
-            if (!lastPriceRange || currentRange.from !== lastPriceRange.from || currentRange.to !== lastPriceRange.to) {
-              lastPriceRange = currentRange;
-              stableFrames = 0;
-              // ACTIVE DRAG: disable cache so every projection hits the live API
-              if (projectionServiceRef.current) {
-                projectionServiceRef.current.setCacheEnabled(false);
-              }
-              schedulerRef.current.markAllDirty();
-            } else {
-              stableFrames++;
-              // After 3 stable frames (~50ms), re-enable cache for performance
-              if (stableFrames === 3) {
-                if (projectionServiceRef.current) {
-                  projectionServiceRef.current.setCacheEnabled(true);
-                }
-                schedulerRef.current.markAllDirty();
-              }
-            }
+          const topPrice = series.coordinateToPrice(0);
+          const bottomPrice = series.coordinateToPrice(chartContainer.clientHeight);
+          if (topPrice !== lastTopPrice || bottomPrice !== lastBottomPrice) {
+            lastTopPrice = topPrice;
+            lastBottomPrice = bottomPrice;
+            scheduleDraw();
           }
         } catch (e) {
-          // Series/chart might be disposed
+          // Series might be disposed, ignore
         }
       }
-      if (isMountedRef.current) {
-        animationFrameId = requestAnimationFrame(checkPriceScale);
-      }
+      animationFrameId = requestAnimationFrame(checkPriceScale);
     };
 
     animationFrameId = requestAnimationFrame(checkPriceScale);
@@ -2394,22 +2413,8 @@ export default function DrawingCanvas({
 
       const swingsFlag = FeatureFlags.get('primitive_manager.swings');
 
-      // Read toolbar toggle states
-      const showDealingRanges = debugOverlayFiltersRef.current?.dealingRanges !== false;
-      const showSwings        = debugOverlayFiltersRef.current?.swings !== false;
-      const showLiquidity     = debugOverlayFiltersRef.current?.liquidity !== false;
-
       const filtered = visibleObjects.filter(obj => {
         const isSwing = obj.type === 'swing' || obj.type === 'strong_swing' || obj.type === 'swing_high' || obj.type === 'swing_low';
-        const isLiquidity = obj.type === 'liquidity' || obj.type === 'liquidity_object';
-        const isDealingRange = obj.type === 'dealing_range';
-
-        // Hide if toggled off in toolbar
-        if (!showDealingRanges && isDealingRange) return false;
-        if (!showSwings && isSwing) return false;
-        if (!showLiquidity && isLiquidity) return false;
-
-        // Hide swings that are handled by PrimitiveManager (native series markers)
         if (isSwing && swingsFlag === 'on') {
           return false;
         }
@@ -2419,17 +2424,19 @@ export default function DrawingCanvas({
         return targetLayer === layerName;
       });
 
-
       const labelOccupied = new Set();
       let selectedDrawn = false;
-      
+
+      // Sort by degree (HTF first, LTF last) so larger markers render in the
+      // background and smaller markers appear on top. Within the same degree,
+      // preserve chronological order. Non-swing objects sort to the back.
       filtered.sort((a, b) => {
-        const degA = a.properties?.degree || (a.concept_label && {STH:1,STL:1,ITH:2,ITL:2,LTH:3,LTL:3}[a.concept_label]) || 0;
-        const degB = b.properties?.degree || (b.concept_label && {STH:1,STL:1,ITH:2,ITL:2,LTH:3,LTL:3}[b.concept_label]) || 0;
-        if (degA !== degB) return degB - degA; // HTF first (drawn first = background)
+        const degA = a.properties?.degree || (a.concept_label && { STH:1,STL:1,ITH:2,ITL:2,LTH:3,LTL:3 }[a.concept_label]) || 0;
+        const degB = b.properties?.degree || (b.concept_label && { STH:1,STL:1,ITH:2,ITL:2,LTH:3,LTL:3 }[b.concept_label]) || 0;
+        if (degA !== degB) return degB - degA;  // Higher degree (HTF) first
         const ta = a.timeStart !== undefined ? a.timeStart : a.time;
         const tb = b.timeStart !== undefined ? b.timeStart : b.time;
-        return ta - tb; // Chronological within same degree
+        return ta - tb;
       });
 
       filtered.forEach(obj => {
@@ -2497,6 +2504,12 @@ export default function DrawingCanvas({
 
     const limit = getReplayTimeLimit();
 
+    // Collision detection set for ray labels — prevents overlapping price
+    // labels when multiple rays are at similar price levels. Each label
+    // claims a 20px vertical bucket; subsequent labels in the same bucket
+    // are skipped (the line still draws, just without the price label).
+    const rayLabelOccupied = new Set();
+
     localDrawingsRef.current.forEach((shape, index) => {
       if (shape.points && shape.points.length > 0) {
         const firstPoint = shape.points[0];
@@ -2507,7 +2520,7 @@ export default function DrawingCanvas({
 
       const isSelected = selectedDrawingRef.current === index;
       try {
-        drawShape(ctx, shape, isSelected, index);
+        drawShape(ctx, shape, isSelected, index, rayLabelOccupied);
       } catch (e) {
         console.warn('[drawShape] error rendering shape', shape.type, e);
       }
@@ -2568,7 +2581,7 @@ export default function DrawingCanvas({
           tradeDirection: defaults.tradeDirection || 'long'
         } : {})
       };
-      drawShape(ctx, previewShape, false, -1);
+      drawShape(ctx, previewShape, false, -1, new Set());
     }
 
     // 2. Draw snapping circle
@@ -2687,13 +2700,9 @@ export default function DrawingCanvas({
       }
     }
 
-    // 4. Selection handles
-    if (selectedDrawingRef.current !== null && selectedDrawingRef.current >= 0) {
-      const shape = localDrawingsRef.current[selectedDrawingRef.current];
-      if (shape && !hideDrawingsRef.current && isDrawingVisible(shape, timeframeRef.current)) {
-        drawSelectionHandles(ctx, shape);
-      }
-    }
+    // 4. Selection handles — drawn inside drawShape() when isSelected=true,
+    // so no separate call needed here. The drawShape function handles rendering
+    // handles for all shape types (ray, trendline, rectangle, etc.) when selected.
 
     ctx.restore();
   };
@@ -2831,7 +2840,7 @@ export default function DrawingCanvas({
 
 
 
-  const drawShape = (ctx, shape, isSelected, index) => {
+  const drawShape = (ctx, shape, isSelected, index, rayLabelOccupied) => {
     if (!shape.points || shape.points.length === 0) return;
 
     const coords = shape.points.map(p => pointToCoords(p)).filter(Boolean);
@@ -3056,30 +3065,47 @@ export default function DrawingCanvas({
     } else if (shape.type === 'horizontal-line') {
       // Native PriceLine renders the line; we only draw handles here if selected
     } else if (shape.type === 'ray') {
-      // Use clientWidth (logical px) not .width (backing buffer) — fixes HiDPI/Retina clipping
-      const rayEndX = canvasRef.current.clientWidth;
+      // A horizontal ray extends from the LEFT edge (X=0) to the RIGHT edge
+      // (X=canvasWidth) of the chart. The anchor point only sets the PRICE (Y) —
+      // the X position of the click is irrelevant for a horizontal ray.
+      // This matches TradingView behavior: a horizontal ray spans the full chart width.
+      const canvas = canvasRef.current;
+      const rayEndX = canvas ? canvas.clientWidth : 2000;
       ctx.beginPath();
-      ctx.moveTo(coords[0].x, coords[0].y);
-      ctx.lineTo(rayEndX, coords[0].y);
+      ctx.moveTo(0, coords[0].y);        // Always start from left edge
+      ctx.lineTo(rayEndX, coords[0].y);  // Extend to right edge
       ctx.stroke();
 
       // Price label on Y-axis (TV behavior: ray always shows its price)
-      if (shape.id) {
+      // Collision detection: skip label if another ray's label is in the same
+      // 20px vertical bucket. The line still draws — only the label is skipped.
+      if (shape.id && rayLabelOccupied) {
         const { paneWidth } = getChartDimensions();
         const price = shape.points[0].price;
         if (price !== undefined && paneWidth > 0) {
           const label = price.toFixed(2);
-          ctx.save();
-          ctx.setLineDash([]);
-          ctx.font = '500 11px Outfit, sans-serif';
-          const labelPad = 4;
-          const labelH = 18;
-          const labelW = ctx.measureText(label).width + labelPad * 2;
-          ctx.fillStyle = shape.color || '#2962ff';
-          ctx.fillRect(paneWidth, coords[0].y - labelH / 2, labelW, labelH);
-          ctx.fillStyle = '#ffffff';
-          ctx.fillText(label, paneWidth + labelPad, coords[0].y + 4);
-          ctx.restore();
+          // Check collision — use 20px buckets
+          const bucket = Math.round(coords[0].y / 20);
+          if (rayLabelOccupied.has(bucket)) {
+            // Skip label — another ray already claimed this vertical zone
+          } else {
+            rayLabelOccupied.add(bucket);
+            ctx.save();
+            ctx.setLineDash([]);
+            ctx.font = '500 11px Outfit, sans-serif';
+            const labelPad = 4;
+            const labelH = 18;
+            const labelW = ctx.measureText(label).width + labelPad * 2;
+            // Clamp label Y so it doesn't clip off top or bottom of canvas
+            const canvasH = canvas ? canvas.clientHeight : 500;
+            let labelY = coords[0].y - labelH / 2;
+            labelY = Math.max(0, Math.min(labelY, canvasH - labelH));
+            ctx.fillStyle = shape.color || '#2962ff';
+            ctx.fillRect(paneWidth, labelY, labelW, labelH);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(label, paneWidth + labelPad, labelY + labelH - 5);
+            ctx.restore();
+          }
         }
       }
     } else if (shape.type === 'rectangle' && coords.length >= 2) {

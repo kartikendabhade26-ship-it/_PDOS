@@ -3,6 +3,8 @@ const path = require('path');
 const readline = require('readline');
 const { getESTOffset } = require('./utils/math/time');
 
+// Cross-platform data directory resolution.
+// Priority: PDOS_DATA_DIR env var → repo-local ./data folder → legacy Windows paths.
 const SCAN_DIRS = [
   process.env.PDOS_DATA_DIR,
   path.join(__dirname, '..', 'data'),

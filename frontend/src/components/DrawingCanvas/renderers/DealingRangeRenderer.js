@@ -47,68 +47,112 @@ export default class DealingRangeRenderer {
     
     // Check if event is active/developing vs completed vs invalidated
     const isHistorical = event.state === 'completed' || event.state === 'invalidated';
-    const opacity = isSelected ? 1.0 : (isHistorical ? 0.25 : 0.85);
+    const opacity = isSelected ? 1.0 : (isHistorical ? 0.2 : 0.85);
 
     const priceHigh = event.priceHigh;
     const priceLow = event.priceLow;
-    
+    const equilibriumPrice = (priceHigh + priceLow) / 2;
+
     const height = ryLow - ryHigh;
     const ryEq = ryHigh + height * 0.5;
     const ry25 = ryHigh + height * 0.75;
     const ry75 = ryHigh + height * 0.25;
 
+    const direction = event.direction; // 'bullish' | 'bearish'
+    const colorPremium = '#ff1744'; // Pink/Red
+    const colorDiscount = '#00b0ff'; // Teal/Blue
+
+    if (debugMode) {
+      ctx.save();
+      ctx.fillStyle = hexToRGBA(direction === 'bullish' ? colorDiscount : colorPremium, opacity * 0.03);
+      ctx.fillRect(rx0, ryHigh, rx1 - rx0, height);
+
+      ctx.strokeStyle = hexToRGBA(direction === 'bullish' ? colorDiscount : colorPremium, opacity * 0.5);
+      ctx.lineWidth = isSelected ? 2 : 1;
+      ctx.strokeRect(rx0, ryHigh, rx1 - rx0, height);
+
+      ctx.strokeStyle = hexToRGBA('#ffffff', opacity * 0.5);
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(rx0, ryEq);
+      ctx.lineTo(rx1, ryEq);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.font = 'bold 9px Outfit, monospace';
+      ctx.fillStyle = hexToRGBA('#ffffff', opacity * 0.8);
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Range (${event.direction})`, rx0 + 8, ryHigh + 10);
+      ctx.fillText('EQ (50%)', rx1 + 6, ryEq);
+      ctx.fillText('High (100%)', rx1 + 6, ryHigh);
+      ctx.fillText('Low (0%)', rx1 + 6, ryLow);
+      ctx.restore();
+      return;
+    }
+
     ctx.save();
     
-    // Neutral clean styling (semi-translucent white line strokes)
-    ctx.strokeStyle = hexToRGBA('#ffffff', opacity * 0.4);
-    ctx.lineWidth = isSelected ? 1.5 : 1.0;
-    
-    // 1. Draw Left and Right Vertical Brackets (start and end anchors of the range)
-    ctx.beginPath();
-    ctx.moveTo(rx0, ryHigh);
-    ctx.lineTo(rx0, ryLow);
-    ctx.moveTo(rx1, ryHigh);
-    ctx.lineTo(rx1, ryLow);
-    ctx.stroke();
+    // Draw Premium zone shading (High to Eq)
+    ctx.fillStyle = hexToRGBA(colorPremium, opacity * 0.04);
+    ctx.fillRect(rx0, ryHigh, rx1 - rx0, ryEq - ryHigh);
 
-    // 2. Draw Horizontal Levels
+    // Draw Discount zone shading (Eq to Low)
+    ctx.fillStyle = hexToRGBA(colorDiscount, opacity * 0.04);
+    ctx.fillRect(rx0, ryEq, rx1 - rx0, ryLow - ryEq);
+
+    // Draw grid lines
+    ctx.lineWidth = isSelected ? 1.8 : 1.0;
+    
+    // High Boundary
+    ctx.strokeStyle = hexToRGBA(colorPremium, opacity * 0.4);
     ctx.beginPath();
-    // Level 1 (High)
     ctx.moveTo(rx0, ryHigh);
     ctx.lineTo(rx1, ryHigh);
-    // Level 0.75
-    ctx.moveTo(rx0, ry75);
-    ctx.lineTo(rx1, ry75);
-    // Level 0.5 (EQ)
-    ctx.moveTo(rx0, ryEq);
-    ctx.lineTo(rx1, ryEq);
-    // Level 0.25
-    ctx.moveTo(rx0, ry25);
-    ctx.lineTo(rx1, ry25);
-    // Level 0 (Low)
+    ctx.stroke();
+
+    // Low Boundary
+    ctx.strokeStyle = hexToRGBA(colorDiscount, opacity * 0.4);
+    ctx.beginPath();
     ctx.moveTo(rx0, ryLow);
     ctx.lineTo(rx1, ryLow);
-    
     ctx.stroke();
+
+    // Equilibrium (50%)
+    ctx.strokeStyle = hexToRGBA(direction === 'bullish' ? colorDiscount : colorPremium, opacity * 0.5);
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(rx0, ryEq);
+    ctx.lineTo(rx1, ryEq);
+    ctx.stroke();
+
+    // 25% and 75% Fibonacci levels
+    ctx.strokeStyle = hexToRGBA('#ffffff', opacity * 0.2);
+    ctx.setLineDash([2, 2]);
+    
+    ctx.beginPath();
+    ctx.moveTo(rx0, ry25);
+    ctx.lineTo(rx1, ry25);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(rx0, ry75);
+    ctx.lineTo(rx1, ry75);
+    ctx.stroke();
+
     ctx.restore();
 
-    // 3. Draw Right-Aligned Level Labels: "{fraction} ({price})"
+    // Draw Right Axis Brackets / labels
     ctx.save();
-    ctx.font = '500 10px Inter, sans-serif';
-    ctx.fillStyle = hexToRGBA('#e1e2e7', opacity * 0.85);
+    ctx.font = '9px Outfit, sans-serif';
+    ctx.fillStyle = hexToRGBA('#ffffff', opacity * 0.75);
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-
-    const priceRange = priceHigh - priceLow;
-    const price75 = priceLow + priceRange * 0.75;
-    const priceEq = priceLow + priceRange * 0.5;
-    const price25 = priceLow + priceRange * 0.25;
-
-    ctx.fillText(`1 (${priceHigh.toFixed(2)})`, rx1 + 6, ryHigh);
-    ctx.fillText(`0.75 (${price75.toFixed(2)})`, rx1 + 6, ry75);
-    ctx.fillText(`0.5 (${priceEq.toFixed(2)})`, rx1 + 6, ryEq);
-    ctx.fillText(`0.25 (${price25.toFixed(2)})`, rx1 + 6, ry25);
-    ctx.fillText(`0 (${priceLow.toFixed(2)})`, rx1 + 6, ryLow);
+    
+    ctx.fillText('50% (EQ)', rx1 + 6, ryEq);
+    ctx.fillText('100% (High)', rx1 + 6, ryHigh);
+    ctx.fillText('0% (Low)', rx1 + 6, ryLow);
     
     ctx.restore();
   }

@@ -341,7 +341,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   // Higher timeframes use progressively wider windows for cleaner structural pivots.
   for (const t of timeframes) {
     const swingService = new SwingService(t.tf, symbol);
-    const resolvedSwings = swingService.detect(t.bars, { validate: false });
+    const resolvedSwings = swingService.detect(t.bars, { validate: true });
     const structuralHighs = resolvedSwings.filter(s => s.type === 'swing_high' && s.isStructural);
     const structuralLows = resolvedSwings.filter(s => s.type === 'swing_low' && s.isStructural);
     const structuralSwings = resolvedSwings.filter(s => s.isStructural);
@@ -1301,25 +1301,8 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   logger.info('PIPELINE', 'Building Dealing Range relationships...');
   const tRelDbStart = Date.now();
   RegistryService.executeInTransaction(() => {
-    // Helper to find the first index where timeStart >= targetTime in a sorted array
-    function findStartIndex(arr, targetTime) {
-      let low = 0;
-      let high = arr.length - 1;
-      let result = arr.length;
-      while (low <= high) {
-        const mid = (low + high) >>> 1;
-        const t = arr[mid].timeStart !== undefined ? arr[mid].timeStart : arr[mid].time;
-        if (t >= targetTime) {
-          result = mid;
-          high = mid - 1;
-        } else {
-          low = mid + 1;
-        }
-      }
-      return result;
-    }
-
     const allRanges = allEvents.filter(e => e.concept === 'dealing_range');
+    const allPdArrays = allEvents.filter(e => e.concept === 'fvg' || e.concept === 'ifvg' || e.concept === 'ob' || e.concept === 'breaker' || e.concept === 'pd_array_matrix');
 
     // Group ranges by timeframe for fast lower-timeframe lookup
     const rangesByTf = {};
@@ -1338,7 +1321,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
         stageCounts.relationshipsBuilt++;
       }
 
-      // 2. Contains and Nested Inside Relationships (with child ranges)
+      // 2. Contains and Nested Inside Relationships
       const rHigh = range.priceHigh;
       const rLow = range.priceLow;
       const rStart = range.timeStart;
@@ -1348,26 +1331,31 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       for (const tfVal of tfs) {
         if (tfVal >= range.timeframe) continue;
         const childRanges = rangesByTf[tfVal] || [];
-        
-        // Find starting index within range's active window using binary search
-        const startIdx = findStartIndex(childRanges, rStart);
-        
-        for (let k = startIdx; k < childRanges.length; k++) {
-          const childRange = childRanges[k];
-          const t = childRange.timeStart !== undefined ? childRange.timeStart : childRange.time;
-          if (t > rEnd) {
-            break; // Stop immediately once we exceed the parent range active window
-          }
+        for (const childRange of childRanges) {
           if (childRange.id === range.id) continue;
 
           if (childRange.priceLow >= rLow &&
-              childRange.priceHigh <= rHigh) {
+              childRange.priceHigh <= rHigh &&
+              childRange.timeStart >= rStart &&
+              (childRange.timeEnd || childRange.timeStart) <= rEnd) {
             // range contains childRange
             insertRelationship.run(runId, range.id, childRange.id, 'contains');
             // childRange nested_inside range
             insertRelationship.run(runId, range.id, childRange.id, 'nested_inside');
             stageCounts.relationshipsBuilt += 2;
           }
+        }
+      }
+
+      // Find active PD arrays inside this Dealing Range
+      for (const arr of allPdArrays) {
+        if (arr.timeframe !== range.timeframe) continue; // Same timeframe matrix nesting
+        if (arr.priceLow >= rLow &&
+            arr.priceHigh <= rHigh &&
+            arr.time >= rStart &&
+            arr.time <= rEnd) {
+          insertRelationship.run(runId, range.id, arr.id, 'contains');
+          stageCounts.relationshipsBuilt++;
         }
       }
     }

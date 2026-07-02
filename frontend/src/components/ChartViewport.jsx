@@ -600,7 +600,7 @@ export default function ChartViewport({
       {/* HUD OHLC BAR */}
       {hudBar && chartSettings.showOhlc && (
         <div className="hud-ohlc">
-          <span>{activeSymbol.replace(/_historical_data/i, '').replace(/_/g, ' ').toUpperCase()}</span>
+          <span>{activeSymbol.toUpperCase()}</span>
           <span>•</span>
           <span>{timeframe < 60 ? `${timeframe}m` : timeframe < 1440 ? `${timeframe/60}H` : 'D'}</span>
           <span>•</span>
@@ -615,42 +615,26 @@ export default function ChartViewport({
         </div>
       )}
 
-      {/* HUD SESSIONS LIST */}
+      {/* HUD SESSIONS LIST — compact, top-right, active session highlighted */}
       {showSessions && allBars.length > 0 && (() => {
-        const latestBar = allBars[allBars.length - 1];
-        const date = new Date(latestBar.time * 1000);
-        
-        // Convert to America/New_York decimal hours
-        let estHour = 0;
-        let estMinute = 0;
-        try {
-          const estStr = date.toLocaleString("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false });
-          const estMinStr = date.toLocaleString("en-US", { timeZone: "America/New_York", minute: "2-digit" });
-          estHour = parseInt(estStr, 10);
-          estMinute = parseInt(estMinStr, 10);
-        } catch (e) {
-          // Fallback to UTC-5
-          const estDate = new Date(date.getTime() - 5 * 3600000);
-          estHour = estDate.getUTCHours();
-          estMinute = estDate.getUTCMinutes();
-        }
-        const estTime = estHour + estMinute / 60;
-
-        const isLondonActive = estTime >= 2.0 && estTime <= 5.0;
-        const isNyAmActive = estTime >= 8.5 && estTime <= 12.0;
-        const isNyPmActive = estTime >= 13.5 && estTime <= 16.0;
-
+        const nowMin = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
+        const estOffset = -5 * 60; // EST is UTC-5
+        const estMin = (nowMin + estOffset + 1440) % 1440;
+        const isActive = (start, end) => estMin >= start && estMin < end;
+        const londonActive = isActive(2 * 60, 5 * 60);
+        const nyAmActive = isActive(8 * 60 + 30, 12 * 60);
+        const nyPmActive = isActive(13 * 60 + 30, 16 * 60);
         return (
           <div className="sessions-list-indicator">
-            <div className={`session-indicator-badge ${isLondonActive ? 'active' : ''}`}>
+            <div className={`session-indicator-badge ${londonActive ? 'active' : ''}`}>
               <span className="session-dot" style={{ backgroundColor: '#26a69a' }} />
               <span>London</span>
             </div>
-            <div className={`session-indicator-badge ${isNyAmActive ? 'active' : ''}`}>
+            <div className={`session-indicator-badge ${nyAmActive ? 'active' : ''}`}>
               <span className="session-dot" style={{ backgroundColor: '#2962ff' }} />
               <span>NY AM</span>
             </div>
-            <div className={`session-indicator-badge ${isNyPmActive ? 'active' : ''}`}>
+            <div className={`session-indicator-badge ${nyPmActive ? 'active' : ''}`}>
               <span className="session-dot" style={{ backgroundColor: '#aa00ff' }} />
               <span>NY PM</span>
             </div>

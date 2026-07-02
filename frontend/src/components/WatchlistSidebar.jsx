@@ -1,6 +1,25 @@
 import React from 'react';
 import ChatAssistant from './ChatAssistant';
 
+// Static watchlist context symbols (the project only ships NQ_Historical_Data,
+// so these provide TradingView-style visual context for the futures chain).
+const CONTEXT_SYMBOLS = [
+  { sym: 'ES1!',   price: 5800.25,  changePct:  0.4 },
+  { sym: 'NQ1!',   price: 20150.75, changePct: -0.2 },
+  { sym: 'YM1!',   price: 42150.00, changePct:  0.1 },
+  { sym: 'RTY1!',  price: 2045.50,  changePct:  0.8 }
+];
+
+function formatPrice(p) {
+  if (p == null || Number.isNaN(p)) return '—';
+  return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatChangePct(pct) {
+  if (pct == null || Number.isNaN(pct)) return '';
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+}
+
 export default function WatchlistSidebar({
   rightSidebarTab,
   setRightSidebarTab,
@@ -48,10 +67,10 @@ export default function WatchlistSidebar({
   
   const selectableRanges = [];
   if (mainRange) {
-    selectableRanges.push({ id: mainRange.id, label: `Dominant Active Range (${mainRange.direction === 'bullish' ? '📈 Bull' : '📉 Bear'})` });
+    selectableRanges.push({ id: mainRange.id, label: `Dominant Active Range (${mainRange.direction === 'bullish' ? 'Bull' : 'Bear'})` });
   }
   nestedRanges.forEach((r) => {
-    selectableRanges.push({ id: r.id, label: `↳ Nested Child Range (TF: ${r.timeframe}m, ${r.direction === 'bullish' ? '📈 Bull' : '📉 Bear'})` });
+    selectableRanges.push({ id: r.id, label: `Nested Child Range (TF: ${r.timeframe}m, ${r.direction === 'bullish' ? 'Bull' : 'Bear'})` });
   });
 
   const selectedRangeId = narrativeFocusRangeId || (selectableRanges[0]?.id);
@@ -64,81 +83,118 @@ export default function WatchlistSidebar({
       }
     }
   }, [narrativeMode, algoCandidates, narrativeFocusRangeId, setNarrativeFocusRangeId]);
-  
+
+  // Real symbol last close (from chart bars) — used to mark the active symbol's live price.
+  const realLastBar = (replayMode && replayIndex > 0)
+    ? allBars[replayIndex - 1]
+    : (allBars && allBars.length > 0 ? allBars[allBars.length - 1] : null);
+  const realPrevBar = (replayMode && replayIndex > 1)
+    ? allBars[replayIndex - 2]
+    : (allBars && allBars.length > 1 ? allBars[allBars.length - 2] : null);
+  const realLastPrice = realLastBar?.close ?? null;
+  const realChangePct = (realLastBar && realPrevBar && realPrevBar.close !== 0)
+    ? ((realLastBar.close - realPrevBar.close) / realPrevBar.close) * 100
+    : null;
+
   return (
-    <aside className="watchlist-sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
-      <div className="watchlist-header" style={{ display: 'flex', gap: '2px', padding: '0 2px', height: '39px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <button 
-          className={`toolbar-btn ${rightSidebarTab === 'market' ? 'active' : ''}`}
-          style={{ flex: 1, height: '28px', margin: '5px 0', fontSize: '9px', fontWeight: 600, borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+    <aside className="watchlist-sidebar">
+      {/* Tab header (32px tall, text-only, accent underline) */}
+      <div className="watchlist-header">
+        <button
+          className={`watchlist-tab ${rightSidebarTab === 'market' ? 'active' : ''}`}
           onClick={() => setRightSidebarTab('market')}
         >
-          Market
+          Watchlist
         </button>
-        <button 
-          className={`toolbar-btn ${rightSidebarTab === 'research' ? 'active' : ''}`}
-          style={{ flex: 1, height: '28px', margin: '5px 0', fontSize: '9px', fontWeight: 600, borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+        <button
+          className={`watchlist-tab ${rightSidebarTab === 'research' ? 'active' : ''}`}
           onClick={() => setRightSidebarTab('research')}
         >
-          Research
+          Details
         </button>
-        <button 
-          className={`toolbar-btn ${rightSidebarTab === 'chat' ? 'active' : ''}`}
-          style={{ flex: 1, height: '28px', margin: '5px 0', fontSize: '9px', fontWeight: 600, borderRadius: '4px', cursor: 'pointer', padding: 0 }}
+        <button
+          className={`watchlist-tab ${rightSidebarTab === 'chat' ? 'active' : ''}`}
           onClick={() => setRightSidebarTab('chat')}
         >
-          🤖 Chat
+          AI Chat
         </button>
       </div>
 
+      {/* WATCHLIST TAB */}
       {rightSidebarTab === 'market' && (
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-          <div className="watchlist-list" style={{ flex: 1, overflowY: 'auto' }}>
-            {symbols.map(sym => {
-              const isActive = sym === activeSymbol;
-              return (
-                <div
-                  key={sym}
-                  className={`watchlist-item ${isActive ? 'active' : ''}`}
-                  onClick={() => setActiveSymbol(sym)}
-                >
-                  <div>
-                    <div className="symbol-name">{sym.toUpperCase()}</div>
-                    <div className="symbol-desc">Nasdaq Futures File</div>
-                  </div>
-                  <div className="symbol-price-group">
-                    <div className="symbol-price" style={{ color: isActive ? 'var(--accent)' : 'inherit' }}>
-                      Active
-                    </div>
-                  </div>
+        <div className="watchlist-list">
+          {/* Real chart symbols (active = the symbol currently loaded on the chart) */}
+          {symbols.map(sym => {
+            const isActive = sym === activeSymbol;
+            return (
+              <div
+                key={sym}
+                className={`watchlist-item ${isActive ? 'active' : ''}`}
+                onClick={() => setActiveSymbol(sym)}
+              >
+                <div>
+                  <div className="symbol-name">{sym.toUpperCase()}</div>
+                  <div className="symbol-desc">Nasdaq Futures File</div>
                 </div>
-              );
-            })}
+                <div className="symbol-price-group">
+                  <div className="symbol-price">
+                    {isActive && realLastPrice !== null ? formatPrice(realLastPrice) : '—'}
+                  </div>
+                  {isActive && realChangePct !== null && (
+                    <div className={`symbol-change ${realChangePct >= 0 ? 'up' : 'dn'}`}>
+                      {formatChangePct(realChangePct)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Divider between real and context symbols */}
+          <div style={{ padding: '6px 12px 4px', fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+            Context (futures chain)
           </div>
+
+          {/* Static context symbols for visual TradingView-like density */}
+          {CONTEXT_SYMBOLS.map(ctx => (
+            <div
+              key={ctx.sym}
+              className="watchlist-item"
+              onClick={(e) => {
+                e.preventDefault();
+                // Context symbols are not real data — clicking them is a no-op
+                // (preserves the active symbol).
+              }}
+              style={{ opacity: 0.7 }}
+              title="Context symbol — not in local database"
+            >
+              <div>
+                <div className="symbol-name">{ctx.sym}</div>
+                <div className="symbol-desc">CME Futures (static)</div>
+              </div>
+              <div className="symbol-price-group">
+                <div className="symbol-price">{formatPrice(ctx.price)}</div>
+                <div className={`symbol-change ${ctx.changePct >= 0 ? 'up' : 'dn'}`}>
+                  {formatChangePct(ctx.changePct)}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
+      {/* DETAILS TAB (selected annotation's key-value list) */}
       {rightSidebarTab === 'research' && (
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', padding: '12px' }}>
-          <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            DEBUG OVERLAY FILTERS
-          </span>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: '6px 10px',
-            background: '#131722',
-            padding: '10px',
-            borderRadius: '6px',
-            border: '1px solid rgba(255,255,255,0.04)'
-          }}>
+        <div className="details-panel">
+          <div className="details-section-title">Debug Overlay Filters</div>
+          <div className="details-checkbox-grid">
             {[
               { key: 'swings', label: 'Fractal Swings' },
               { key: 'liquidity', label: 'Liquidity Pools' },
               { key: 'structure', label: 'Structure Breaks' },
               { key: 'dealingRanges', label: 'Dealing Ranges' }
             ].map(item => (
-              <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#abb2bf', cursor: 'pointer' }}>
+              <label key={item.key}>
                 <input
                   type="checkbox"
                   checked={debugOverlayFilters?.[item.key] ?? true}
@@ -148,47 +204,81 @@ export default function WatchlistSidebar({
                       [item.key]: e.target.checked
                     }));
                   }}
-                  style={{ accentColor: '#ff9100', cursor: 'pointer' }}
                 />
                 {item.label}
               </label>
             ))}
           </div>
 
-          <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '8px', marginTop: '16px' }}>
-            SELECTED EVENT
-          </span>
+          <div className="details-section-title">Selected Annotation</div>
           {selectedAlgoCandidate ? (
-            <div style={{ background: '#131722', borderRadius: '6px', padding: '10px', border: '1px solid rgba(255,255,255,0.04)', fontSize: '11px', color: '#abb2bf', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Type:</span>
-                <span style={{ color: '#fff', fontWeight: 600 }}>{selectedAlgoCandidate.type}</span>
+            <div className="details-card">
+              <div className="details-row">
+                <span className="details-label">Type</span>
+                <span className="details-value">{selectedAlgoCandidate.type}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-muted)' }}>ID:</span>
-                <span style={{ fontFamily: 'monospace', color: '#61dafb', fontSize: '9px' }}>{selectedAlgoCandidate.id?.slice(0,12)}…</span>
+              <div className="details-row">
+                <span className="details-label">ID</span>
+                <span className="details-value mono">{selectedAlgoCandidate.id?.slice(0, 12)}…</span>
               </div>
-              {selectedAlgoCandidate.priceHigh && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>High:</span>
-                  <span style={{ fontFamily: 'monospace' }}>{selectedAlgoCandidate.priceHigh?.toFixed(2)}</span>
+              {selectedAlgoCandidate.direction && (
+                <div className="details-row">
+                  <span className="details-label">Direction</span>
+                  <span className={`details-value ${selectedAlgoCandidate.direction === 'bullish' ? 'up' : 'dn'}`}
+                        style={{ color: selectedAlgoCandidate.direction === 'bullish' ? 'var(--green)' : 'var(--red)' }}>
+                    {selectedAlgoCandidate.direction.toUpperCase()}
+                  </span>
                 </div>
               )}
-              {selectedAlgoCandidate.priceLow && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>Low:</span>
-                  <span style={{ fontFamily: 'monospace' }}>{selectedAlgoCandidate.priceLow?.toFixed(2)}</span>
+              {selectedAlgoCandidate.priceHigh != null && (
+                <div className="details-row">
+                  <span className="details-label">High</span>
+                  <span className="details-value mono">{selectedAlgoCandidate.priceHigh.toFixed(2)}</span>
+                </div>
+              )}
+              {selectedAlgoCandidate.priceLow != null && (
+                <div className="details-row">
+                  <span className="details-label">Low</span>
+                  <span className="details-value mono">{selectedAlgoCandidate.priceLow.toFixed(2)}</span>
+                </div>
+              )}
+              {selectedAlgoCandidate.timeframe != null && (
+                <div className="details-row">
+                  <span className="details-label">Timeframe</span>
+                  <span className="details-value mono">{selectedAlgoCandidate.timeframe}m</span>
+                </div>
+              )}
+              {selectedAlgoCandidate.timeStart != null && (
+                <div className="details-row">
+                  <span className="details-label">Start</span>
+                  <span className="details-value mono">
+                    {new Date(selectedAlgoCandidate.timeStart * 1000).toLocaleString('en-US', { timeZone: 'America/New_York' })}
+                  </span>
+                </div>
+              )}
+              {selectedAlgoCandidate.timeEnd != null && (
+                <div className="details-row">
+                  <span className="details-label">End</span>
+                  <span className="details-value mono">
+                    {new Date(selectedAlgoCandidate.timeEnd * 1000).toLocaleString('en-US', { timeZone: 'America/New_York' })}
+                  </span>
+                </div>
+              )}
+              {selectedAlgoCandidate.state && (
+                <div className="details-row">
+                  <span className="details-label">State</span>
+                  <span className="details-value accent">{selectedAlgoCandidate.state}</span>
                 </div>
               )}
               <button
+                className="details-jump-btn"
                 onClick={() => onJumpToTime && onJumpToTime(selectedAlgoCandidate.time)}
-                style={{ marginTop: '6px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: '4px', padding: '5px 8px', fontSize: '10px', cursor: 'pointer', fontWeight: 600 }}
               >
                 Jump to Event
               </button>
             </div>
           ) : (
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No event selected</div>
+            <div className="details-empty">Select a chart annotation to see details</div>
           )}
         </div>
       )}
@@ -198,175 +288,75 @@ export default function WatchlistSidebar({
         const currentPrice = activeBar ? activeBar.close : null;
 
         let quadrantLabel = 'N/A';
-        let quadrantColor = '#abb2bf';
+        let quadrantColor = 'var(--text)';
         if (selectedRangeObj && currentPrice !== null) {
           const eq = selectedRangeObj.properties?.equilibrium || ((selectedRangeObj.priceHigh + selectedRangeObj.priceLow) / 2);
           if (currentPrice > eq) {
-            quadrantLabel = 'Premium Quadrant (Short bias) 🔴';
-            quadrantColor = '#ef5350';
+            quadrantLabel = 'Premium Quadrant (Short bias)';
+            quadrantColor = 'var(--red)';
           } else {
-            quadrantLabel = 'Discount Quadrant (Long bias) 🟢';
-            quadrantColor = '#26a69a';
+            quadrantLabel = 'Discount Quadrant (Long bias)';
+            quadrantColor = 'var(--green)';
           }
         }
 
         const deliveryState = selectedRangeObj?.properties?.deliveryState || {};
 
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-            {/* Context Card */}
-            <div style={{
-              padding: '12px',
-              borderBottom: '1px solid var(--border)',
-              background: '#161925',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
-              flexShrink: 0
-            }}>
-              <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-                CURRENT MARKET NARRATIVE
-              </span>
-
-              {selectedRangeObj ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '11px', color: '#abb2bf' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>Active Dealing Range:</span>
-                    <span style={{
-                      fontWeight: 'bold',
-                      color: selectedRangeObj.direction === 'bullish' ? '#26a69a' : '#ef5350',
-                      background: selectedRangeObj.direction === 'bullish' ? 'rgba(38,166,154,0.1)' : 'rgba(239,83,80,0.1)',
-                      padding: '2px 6px',
-                      borderRadius: '3px'
-                    }}>
-                      {selectedRangeObj.direction.toUpperCase()} ({selectedRangeObj.timeframe}m)
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Range High:</span>
-                    <span style={{ fontFamily: 'monospace', color: '#fff' }}>{selectedRangeObj.priceHigh.toFixed(2)}</span>
-                  </div>
-                  
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Equilibrium:</span>
-                    <span style={{ fontFamily: 'monospace', color: '#ffb300' }}>
-                      {((selectedRangeObj.priceHigh + selectedRangeObj.priceLow) / 2).toFixed(2)}
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Range Low:</span>
-                    <span style={{ fontFamily: 'monospace', color: '#fff' }}>{selectedRangeObj.priceLow.toFixed(2)}</span>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px' }}>
-                    <span>Current Price:</span>
-                    <span style={{ fontFamily: 'monospace', color: '#fff', fontWeight: 600 }}>{currentPrice ? currentPrice.toFixed(2) : 'N/A'}</span>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>PD Quadrant:</span>
-                    <span style={{ fontWeight: 600, color: quadrantColor }}>{quadrantLabel}</span>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px' }}>
-                    <span>Protected Level:</span>
-                    <span style={{ fontFamily: 'monospace', color: '#ffb74d', fontWeight: 'bold' }}>
-                      {deliveryState.protected_level ? deliveryState.protected_level.toFixed(2) : 'N/A'}
-                    </span>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Current Extremum:</span>
-                    <span style={{ fontFamily: 'monospace', color: '#81c784' }}>
-                      {deliveryState.current_extremum ? deliveryState.current_extremum.toFixed(2) : 'N/A'}
-                    </span>
-                  </div>
+          <div className="details-panel">
+            <div className="details-section-title">Current Market Narrative</div>
+            {selectedRangeObj ? (
+              <div className="details-card">
+                <div className="details-row">
+                  <span className="details-label">Active Range</span>
+                  <span className="details-value"
+                        style={{ color: selectedRangeObj.direction === 'bullish' ? 'var(--green)' : 'var(--red)' }}>
+                    {selectedRangeObj.direction.toUpperCase()} ({selectedRangeObj.timeframe}m)
+                  </span>
                 </div>
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100px', fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                  No active narrative range detected
+                <div className="details-row">
+                  <span className="details-label">Range High</span>
+                  <span className="details-value mono">{selectedRangeObj.priceHigh.toFixed(2)}</span>
                 </div>
-              )}
-            </div>
-
-            {/* Timeline */}
-            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-              <div style={{ padding: '8px 12px', background: '#1c2030', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)' }}>EVENT TIMELINE</span>
-                <span style={{ fontSize: '9px', background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: '3px', color: '#fff' }}>
-                  {timelineEntries.length} events
-                </span>
+                <div className="details-row">
+                  <span className="details-label">Equilibrium</span>
+                  <span className="details-value mono" style={{ color: '#ffb300' }}>
+                    {((selectedRangeObj.priceHigh + selectedRangeObj.priceLow) / 2).toFixed(2)}
+                  </span>
+                </div>
+                <div className="details-row">
+                  <span className="details-label">Range Low</span>
+                  <span className="details-value mono">{selectedRangeObj.priceLow.toFixed(2)}</span>
+                </div>
+                <div className="details-row">
+                  <span className="details-label">Current Price</span>
+                  <span className="details-value mono">{currentPrice ? currentPrice.toFixed(2) : 'N/A'}</span>
+                </div>
+                <div className="details-row">
+                  <span className="details-label">PD Quadrant</span>
+                  <span className="details-value" style={{ color: quadrantColor }}>{quadrantLabel}</span>
+                </div>
+                <div className="details-row">
+                  <span className="details-label">Protected Level</span>
+                  <span className="details-value mono" style={{ color: '#ffb74d' }}>
+                    {deliveryState.protected_level ? deliveryState.protected_level.toFixed(2) : 'N/A'}
+                  </span>
+                </div>
+                <div className="details-row">
+                  <span className="details-label">Current Extremum</span>
+                  <span className="details-value mono" style={{ color: 'var(--green)' }}>
+                    {deliveryState.current_extremum ? deliveryState.current_extremum.toFixed(2) : 'N/A'}
+                  </span>
+                </div>
               </div>
-
-              <div 
-                ref={timelineScrollRef}
-                className="watchlist-list" 
-                style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}
-              >
-                {timelineEntries.length > 0 ? (
-                  timelineEntries.map((entry, idx) => {
-                    let badgeColor = 'rgba(255,255,255,0.05)';
-                    let textColor = '#abb2bf';
-                    
-                    if (entry.type.includes('swept')) {
-                      badgeColor = 'rgba(239,83,80,0.15)';
-                      textColor = '#ff5252';
-                    } else if (entry.type.includes('confirmed')) {
-                      badgeColor = 'rgba(0,230,118,0.15)';
-                      textColor = '#00e676';
-                    } else if (entry.type.includes('range-completed')) {
-                      badgeColor = 'rgba(255,179,0,0.15)';
-                      textColor = '#ffb300';
-                    } else if (entry.type.includes('range-started')) {
-                      badgeColor = 'rgba(33,150,243,0.15)';
-                      textColor = '#2196f3';
-                    }
-
-                    return (
-                      <div key={idx} style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '4px',
-                        padding: '8px',
-                        background: '#1a1d2c',
-                        borderRadius: '4px',
-                        borderLeft: `3px solid ${textColor === '#abb2bf' ? 'var(--border)' : textColor}`
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px', color: 'var(--text-muted)' }}>
-                          <span style={{ fontFamily: 'monospace' }}>[{entry.timeStr}]</span>
-                          <span style={{
-                            padding: '1px 4px',
-                            background: badgeColor,
-                            color: textColor,
-                            borderRadius: '3px',
-                            fontWeight: 'bold',
-                            fontSize: '8px',
-                            textTransform: 'uppercase'
-                          }}>
-                            {entry.type}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#fff', lineHeight: '1.4' }}>
-                          {entry.text}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                    Waiting for events...
-                  </div>
-                )}
-              </div>
-            </div>
+            ) : (
+              <div className="details-empty">No active narrative range detected</div>
+            )}
           </div>
         );
       })()}
 
-
-
+      {/* AI CHAT TAB */}
       {rightSidebarTab === 'chat' && (
         <ChatAssistant 
           activeSymbol={activeSymbol}

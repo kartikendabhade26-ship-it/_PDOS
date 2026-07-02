@@ -82,55 +82,6 @@ class ResearchEngine {
         runId
       );
 
-      // --- AUTO-PRUNE OLD RUNS ---
-      // Keep only the latest 2 runs of this symbol/workspace combo, plus the default ones
-      try {
-        const defaultRuns = new Set(['run_legacy', 'run_dev', 'run_research']);
-        const runs = db.prepare(`
-          SELECT run_id FROM research_runs 
-          WHERE symbol = ? AND workspace_id = ?
-          ORDER BY created_at DESC
-        `).all(symbol, workspaceId);
-
-        const customRuns = runs.filter(r => !defaultRuns.has(r.run_id));
-        const runsToKeep = customRuns.slice(0, 2).map(r => r.run_id);
-        const unionKeep = new Set([...defaultRuns, ...runsToKeep, runId]);
-
-        const runsToDelete = customRuns.filter(r => !unionKeep.has(r.run_id));
-        if (runsToDelete.length > 0) {
-          logger.info('RESEARCH_ENGINE', `Auto-pruning ${runsToDelete.length} older runs for symbol ${symbol}...`);
-          
-          db.exec("PRAGMA foreign_keys = OFF;");
-          const del1 = db.prepare("DELETE FROM event_relationships WHERE run_id = ?");
-          const del2 = db.prepare("DELETE FROM event_outcomes WHERE run_id = ?");
-          const del3 = db.prepare("DELETE FROM event_context_snapshots WHERE run_id = ?");
-          const del4 = db.prepare("DELETE FROM structure_events WHERE run_id = ?");
-          const del5 = db.prepare("DELETE FROM liquidity_objects WHERE run_id = ?");
-          const del6 = db.prepare("DELETE FROM research_sync_checkpoints WHERE run_id = ?");
-          const del7 = db.prepare("DELETE FROM research_runs WHERE run_id = ?");
-
-          db.exec("BEGIN IMMEDIATE TRANSACTION;");
-          try {
-            for (const r of runsToDelete) {
-              del1.run(r.run_id);
-              del2.run(r.run_id);
-              del3.run(r.run_id);
-              del4.run(r.run_id);
-              del5.run(r.run_id);
-              del6.run(r.run_id);
-              del7.run(r.run_id);
-            }
-            db.exec("COMMIT;");
-            logger.info('RESEARCH_ENGINE', `Auto-pruning completed successfully.`);
-          } catch (txErr) {
-            db.exec("ROLLBACK;");
-            throw txErr;
-          }
-        }
-      } catch (pruneErr) {
-        logger.warn('RESEARCH_ENGINE', 'Failed to auto-prune old runs', pruneErr);
-      }
-
       logger.info('RESEARCH_ENGINE', `Research run ${runId} finalized successfully.`);
       return resultsSummary;
     } catch (err) {

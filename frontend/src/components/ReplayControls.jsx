@@ -177,40 +177,6 @@ export default function ReplayControls({
         )}
       </button>
 
-      {/* Time-Machine Scrubber */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1 1 auto', margin: '0 8px', borderLeft: '1px solid #2a2e39', paddingLeft: '8px' }}>
-        <span style={{ fontSize: '10px', color: '#787b86', fontFamily: 'Outfit, sans-serif' }}>
-          {replayIndex}/{allBars.length}
-        </span>
-        <input
-          type="range"
-          min="1"
-          max={allBars.length || 1}
-          value={replayIndex}
-          onChange={(e) => {
-            const idx = parseInt(e.target.value, 10);
-            setReplayIndex(idx);
-            setCurrentSubStep(0);
-          }}
-          style={{
-            flex: '1 1 auto',
-            cursor: 'pointer',
-            height: '4px',
-            borderRadius: '2px',
-            outline: 'none',
-            WebkitAppearance: 'none',
-            background: `linear-gradient(to right, #2962ff 0%, #2962ff ${(replayIndex / (allBars.length || 1)) * 100}%, #2a2e39 ${(replayIndex / (allBars.length || 1)) * 100}%, #2a2e39 100%)`
-          }}
-          className="replay-scrubber"
-          title="Drag to scrub replay time"
-        />
-        {currentBar && (
-          <span style={{ fontSize: '10px', color: '#b2b5be', fontFamily: 'Outfit, sans-serif', whiteSpace: 'nowrap' }}>
-            {new Date(currentBar.time * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })}
-          </span>
-        )}
-      </div>
-
       {/* Timeframe selector dropdown */}
       <div style={{ position: 'relative' }}>
         <button
@@ -313,18 +279,62 @@ export default function ReplayControls({
       {/* Info Badges */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#fff', paddingRight: '4px', whiteSpace: 'nowrap' }}>
         {currentEstTime && <span style={{ color: '#ffb74d', fontWeight: 600 }}>{currentEstTime} EST</span>}
-        <span 
-          style={{ 
-            backgroundColor: '#ef5350', 
-            color: '#fff', 
-            fontSize: '9px', 
-            fontWeight: 'bold', 
-            padding: '2px 6px', 
-            borderRadius: '3px' 
+        <span
+          style={{
+            backgroundColor: '#ef5350',
+            color: '#fff',
+            fontSize: '9px',
+            fontWeight: 'bold',
+            padding: '2px 6px',
+            borderRadius: '3px'
           }}
           title="Price delivery events beyond the current replay candle are hidden."
         >
           FUTURE HIDDEN
+        </span>
+      </div>
+
+      {/* ─── TIME MACHINE SCRUBBER ───────────────────────────────────────────
+          A full-width timeline slider that lets the user jump to any bar in
+          the dataset. Drag to scrub through time like a video player. Shows
+          the current bar position and total bars. */}
+      <div className="replay-scrubber" style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '0 6px',
+        borderLeft: '1px solid #2a2e39',
+        marginLeft: '4px',
+        flex: '1 1 auto',
+        minWidth: '180px',
+      }}>
+        <span style={{ fontSize: '9px', color: '#787b86', whiteSpace: 'nowrap' }}>
+          {replayIndex}/{allBars.length}
+        </span>
+        <input
+          type="range"
+          min="1"
+          max={allBars.length}
+          value={replayIndex}
+          onChange={(e) => {
+            setReplayIndex(Number(e.target.value));
+            setCurrentSubStep(0);
+          }}
+          className="replay-scrubber-slider"
+          style={{
+            flex: '1 1 auto',
+            height: '4px',
+            cursor: 'pointer',
+            WebkitAppearance: 'none',
+            appearance: 'none',
+            background: 'linear-gradient(to right, #2962ff 0%, #2962ff ' + ((replayIndex / allBars.length) * 100) + '%, #2a2e39 ' + ((replayIndex / allBars.length) * 100) + '%, #2a2e39 100%)',
+            borderRadius: '2px',
+            outline: 'none',
+          }}
+          title="Drag to scrub through time"
+        />
+        <span style={{ fontSize: '9px', color: '#787b86', whiteSpace: 'nowrap' }}>
+          {currentBar ? new Date(currentBar.time * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
         </span>
       </div>
     </div>

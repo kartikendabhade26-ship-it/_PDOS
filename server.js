@@ -24,25 +24,7 @@ const {
   dailyCache
 } = require('./algo/dataLoader');
 
-const PORT = process.env.PORT || 8080;
-
-const mimeTypes = {
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.js': 'text/javascript',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.eot': 'application/vnd.ms-fontobject',
-  '.otf': 'font/otf',
-  '.wasm': 'application/wasm'
-};
+const PORT = parseInt(process.env.PORT || '8080', 10);
 
 let activeSyncWorker = null;
 
@@ -167,29 +149,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Serve built frontend assets from frontend/dist
-  if (!pathname.startsWith('/api/') && req.method === 'GET') {
-    const FRONTEND_DIST = path.join(__dirname, 'frontend', 'dist');
-    let relPath = decodeURIComponent(pathname);
-    if (relPath === '/' || relPath === '') {
-      relPath = '/index.html';
-    }
-    const candidate = path.join(FRONTEND_DIST, relPath);
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      const mime = mimeTypes[path.extname(candidate).toLowerCase()] || 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' });
-      res.end(fs.readFileSync(candidate));
-      return;
-    }
-    // SPA fallback
-    const indexHtml = path.join(FRONTEND_DIST, 'index.html');
-    if (fs.existsSync(indexHtml)) {
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Access-Control-Allow-Origin': '*' });
-      res.end(fs.readFileSync(indexHtml));
-      return;
-    }
-  }
-
 
   // Remote logger debugging endpoint
   if (pathname === '/api/log' && req.method === 'POST') {
@@ -287,15 +246,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ─── ALGO: Get sync statistics or trigger manual sync ───────────────────
-  // GET /api/algo/sync?symbol=NQ_Historical_Data&trigger=true
+  // GET /api/algo/sync?symbol=NQ_Historical_Data&trigger=true&force=true
+  // The `force=true` parameter deletes ALL existing bars + events for this symbol
+  // before re-running the pipeline. Use this when you've replaced the CSV file
+  // with new data and the old data is still in the database.
   if (pathname === '/api/algo/sync' && req.method === 'GET') {
     const symbol = urlObj.searchParams.get('symbol') || 'NQ_Historical_Data';
     const trigger = urlObj.searchParams.get('trigger') === 'true';
+    const force = urlObj.searchParams.get('force') === 'true';
     const mode = urlObj.searchParams.get('mode') || 'interactive';
     const limitBarsParam = urlObj.searchParams.get('limitBars');
     const limitBars = limitBarsParam ? parseInt(limitBarsParam, 10) : null;
     const resume = urlObj.searchParams.get('resume') === 'true';
-    
+
     if (trigger) {
       try {
         const filePath = symbolFiles.get(symbol);
@@ -307,11 +270,28 @@ const server = http.createServer(async (req, res) => {
             res.end('Symbol not found');
             return;
           }
+          if (force) {
+            // Delete ALL bars + events for this symbol to prevent mixing old + new data
+            const db = getDB();
+            db.prepare('DELETE FROM market_bars WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM structure_events WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM liquidity_objects WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM research_runs WHERE symbol = ?').run(symbol);
+            logger.info('SERVER', `[Force Re-sync] Cleared all old data for ${symbol}`);
+          }
           triggerWorkerSync(symbol, fp, { mode, limitBars, resume });
         } else {
+          if (force) {
+            const db = getDB();
+            db.prepare('DELETE FROM market_bars WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM structure_events WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM liquidity_objects WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM research_runs WHERE symbol = ?').run(symbol);
+            logger.info('SERVER', `[Force Re-sync] Cleared all old data for ${symbol}`);
+          }
           triggerWorkerSync(symbol, filePath, { mode, limitBars, resume });
         }
-        sendJSON(res, { success: true, message: `Sync pipeline triggered in worker thread in ${mode} mode` });
+        sendJSON(res, { success: true, message: `Sync pipeline triggered in worker thread in ${mode} mode${force ? ' (force: old data cleared)' : ''}` });
       } catch (err) {
         logger.error('SERVER', 'Error triggering manual sync', err);
         res.writeHead(500); res.end(err.message);
@@ -1110,119 +1090,191 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-
-  // ─── LABELS: GET /api/algo/labels ──────────────────────────────────────
-  if (pathname === '/api/algo/labels' && req.method === 'GET') {
-    const LABELS_FILE = path.join(__dirname, 'algo', 'labels', 'human_labels.json');
-    try {
-      if (fs.existsSync(LABELS_FILE)) {
-        const data = fs.readFileSync(LABELS_FILE, 'utf8');
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(data);
-      } else {
-        sendJSON(res, []);
-      }
-    } catch (err) {
-      logger.error('SERVER', 'Error loading labels', err);
-      sendJSON(res, { success: false, error: err.message }, 500);
-    }
-    return;
-  }
-
-  // ─── LABELS: POST /api/algo/labels ─────────────────────────────────────
+  // ─── LABELS: Save human-labelled concept instances to a JSON log ─────────
+  // POST /api/algo/labels  body: { concept, labels: [{time, priceHigh, priceLow, valid, type, direction, note, ...}] }
   if (pathname === '/api/algo/labels' && req.method === 'POST') {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
-        const parsed = JSON.parse(body);
-        const LABELS_FILE = path.join(__dirname, 'algo', 'labels', 'human_labels.json');
-        
-        const labelsDir = path.dirname(LABELS_FILE);
-        if (!fs.existsSync(labelsDir)) {
-          fs.mkdirSync(labelsDir, { recursive: true });
+        const { concept, labels } = JSON.parse(body);
+        if (!concept || !Array.isArray(labels)) {
+          sendJSON(res, { success: false, error: 'Missing concept or labels array' }, 400);
+          return;
         }
-
+        const LABELS_FILE = path.join(__dirname, 'algo', 'labels', 'human_labels.json');
         let existing = [];
         if (fs.existsSync(LABELS_FILE)) {
-          const raw = fs.readFileSync(LABELS_FILE, 'utf8');
-          try { existing = JSON.parse(raw); } catch (e) {}
+          try { existing = JSON.parse(fs.readFileSync(LABELS_FILE, 'utf8') || '[]'); } catch (e) {}
         }
-
-        // Add saved_at timestamp to each label
-        const newLabels = (parsed.labels || []).map(l => ({
+        const stamped = labels.map(l => ({
           ...l,
+          concept,
           saved_at: new Date().toISOString()
         }));
-
-        existing = existing.concat(newLabels);
-        fs.writeFileSync(LABELS_FILE, JSON.stringify(existing, null, 2), 'utf8');
-        sendJSON(res, { success: true, count: newLabels.length });
+        existing.push(...stamped);
+        fs.mkdirSync(path.dirname(LABELS_FILE), { recursive: true });
+        fs.writeFileSync(LABELS_FILE, JSON.stringify(existing, null, 2));
+        logger.info('SERVER', `Saved ${stamped.length} labels for concept ${concept}`);
+        sendJSON(res, { success: true, saved: stamped.length });
       } catch (err) {
-        logger.error('SERVER', 'Error saving labels', err);
-        sendJSON(res, { success: false, error: err.message }, 400);
+        console.error('[Labels API Error]', err);
+        sendJSON(res, { success: false, error: err.message }, 500);
       }
     });
     return;
   }
 
-  // ─── AI SWINGS: GET /api/ai/swings ──────────────────────────────────────
-  if (pathname === '/api/ai/swings' && req.method === 'GET') {
-    const symbol = urlObj.searchParams.get('symbol') || 'NQ_Historical_Data';
-    const tf = parseInt(urlObj.searchParams.get('timeframe') || '1', 10);
-    const minScore = parseInt(urlObj.searchParams.get('min_score') || '40', 10);
-    const limit = parseInt(urlObj.searchParams.get('limit') || '500', 10);
-    
+  // GET /api/algo/labels — return all saved labels
+  if (pathname === '/api/algo/labels' && req.method === 'GET') {
+    const LABELS_FILE = path.join(__dirname, 'algo', 'labels', 'human_labels.json');
+    if (!fs.existsSync(LABELS_FILE)) { sendJSON(res, []); return; }
     try {
-      // 1. Fetch bars
-      const QueryEngine = require('./algo/QueryEngine');
-      const bars = QueryEngine.getCandles('run_legacy', symbol, tf, null, null, limit * 10);
-      if (!bars || bars.length === 0) {
-        sendJSON(res, []);
-        return;
-      }
-      
-      // 2. Fetch HTF swings for alignment
-      let htfTf = 15;
-      if (tf === 1) htfTf = 15;
-      else if (tf === 5) htfTf = 60;
-      else if (tf === 15) htfTf = 240;
-      else if (tf === 60) htfTf = 1440;
-      else htfTf = 1440;
-      
-      const htfSwings = QueryEngine.getEvents('run_legacy', symbol, htfTf, null, null, 1000);
-      
-      // 3. Detect AI swings
-      const AISwingEngine = require('./algo/engines/aiSwingEngine');
-      const aiSwingEngine = new AISwingEngine();
-      aiSwingEngine.timeframe = tf;
-      
-      const results = aiSwingEngine.detect(bars, { minScore }, {
-        symbol,
-        preComputedSwingsHTF: htfSwings
-      });
-      
-      sendJSON(res, results.slice(-limit));
+      const data = fs.readFileSync(LABELS_FILE, 'utf8');
+      sendJSON(res, JSON.parse(data || '[]'));
     } catch (err) {
-      logger.error('SERVER', 'Error fetching AI swings', err);
       sendJSON(res, { success: false, error: err.message }, 500);
     }
     return;
   }
 
-  // ─── AI SWINGS: GET /api/ai/swings/factors ──────────────────────────────
+  // ─── AI SWING ENGINE: factor-weight documentation ──────────────────────
+  // GET /api/ai/swings/factors
+  // Returns the 7-factor confluence weight table so the frontend can render
+  // a "factor breakdown" panel alongside detected pivots.
   if (pathname === '/api/ai/swings/factors' && req.method === 'GET') {
-    sendJSON(res, {
-      factors: [
-        { name: 'fractal', weight: 30, description: '3-bar fractal = 0.5, 5-bar = 1.0' },
-        { name: 'volume', weight: 20, description: 'Pivot volume vs 20-bar average volume' },
-        { name: 'displacement', weight: 25, description: 'Move size into pivot (0.5% of price travel threshold)' },
-        { name: 'sweep', weight: 15, description: 'Sweeps a prior swing high/low within raw 2.0 price points' },
-        { name: 'session', weight: 5, description: 'London / NY AM session timing alignment' },
-        { name: 'htf', weight: 5, description: 'Aligned with HTF structure swing direction' }
-      ]
-    });
+    try {
+      const AISwingEngine = require('./algo/engines/aiSwingEngine');
+      const factors = AISwingEngine.FACTOR_DOC.map(f => ({
+        key: f.key,
+        weight: f.weight,
+        label: f.label,
+        description: f.description
+      }));
+      sendJSON(res, {
+        success: true,
+        detector_id: 'AI_SWING_v1',
+        weights: AISwingEngine.WEIGHTS,
+        factors,
+        confidence_buckets: [
+          { label: 'very_high', min_score: 80 },
+          { label: 'high',      min_score: 60 },
+          { label: 'medium',    min_score: 40 },
+          { label: 'low',       min_score: 0  }
+        ]
+      });
+    } catch (err) {
+      console.error('[AI Swing Factors API Error]', err);
+      sendJSON(res, { success: false, error: err.message }, 500);
+    }
     return;
+  }
+
+  // ─── AI SWING ENGINE: multi-factor confluence-scored swing detector ────
+  // GET /api/ai/swings?symbol=NQ_Historical_Data&timeframe=1&min_score=60&limit=500
+  if (pathname === '/api/ai/swings' && req.method === 'GET') {
+    const symbol = urlObj.searchParams.get('symbol') || 'NQ_Historical_Data';
+    const timeframe = parseInt(urlObj.searchParams.get('timeframe') || '1', 10);
+    const minScore = parseInt(urlObj.searchParams.get('min_score') || '40', 10);
+    const limit = parseInt(urlObj.searchParams.get('limit') || '500', 10);
+
+    try {
+      let rawBars = cache.get(symbol);
+      if (!rawBars) {
+        let filePath = symbolFiles.get(symbol);
+        if (!filePath) { scanForSymbols(); filePath = symbolFiles.get(symbol); }
+        if (!filePath) { sendJSON(res, { success: false, error: 'Symbol not found' }, 404); return; }
+        rawBars = await parseCsvFile(filePath);
+        if (rawBars.length > 0) cache.set(symbol, rawBars);
+      }
+
+      const AISwingEngine = require('./algo/engines/aiSwingEngine');
+      const engine = new AISwingEngine(timeframe, symbol);
+      const t0 = Date.now();
+      const swings = engine.detect(rawBars, { timeframe, minScore, limit });
+      const elapsedMs = Date.now() - t0;
+
+      // Build confidence histogram
+      const factors_summary = { very_high: 0, high: 0, medium: 0, low: 0 };
+      for (const s of swings) {
+        let props = null;
+        try { props = JSON.parse(s.properties); } catch (_) {}
+        if (props && factors_summary[props.ai_confidence] !== undefined) {
+          factors_summary[props.ai_confidence]++;
+        }
+      }
+
+      sendJSON(res, {
+        success: true,
+        detector_id: 'AI_SWING_v1',
+        symbol,
+        timeframe,
+        min_score: minScore,
+        swings,
+        count: swings.length,
+        bars_processed: rawBars.length,
+        elapsed_ms: elapsedMs,
+        factors_summary
+      });
+    } catch (err) {
+      console.error('[AI Swings API Error]', err);
+      sendJSON(res, { success: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  // ─── STATIC FRONTEND: serve built Vite assets from frontend/dist ─────────
+  // Allows the preview gateway to route a single port (:8080) to the full app.
+  if (!pathname.startsWith('/api/') && req.method === 'GET') {
+    const FRONTEND_DIST = path.join(__dirname, 'frontend', 'dist');
+    let relPath = decodeURIComponent(pathname);
+    if (relPath === '/' || relPath === '') relPath = '/index.html';
+
+    // Security: prevent path traversal
+    if (relPath.includes('..')) {
+      res.writeHead(400); res.end('Bad request'); return;
+    }
+
+    const candidate = path.join(FRONTEND_DIST, relPath);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      const ext = path.extname(candidate).toLowerCase();
+      const mimeTypes = {
+        '.html': 'text/html; charset=utf-8',
+        '.js':   'application/javascript; charset=utf-8',
+        '.css':  'text/css; charset=utf-8',
+        '.json': 'application/json; charset=utf-8',
+        '.svg':  'image/svg+xml',
+        '.png':  'image/png',
+        '.jpg':  'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif':  'image/gif',
+        '.ico':  'image/x-icon',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2',
+        '.ttf':  'font/ttf',
+        '.map':  'application/json'
+      };
+      const mime = mimeTypes[ext] || 'application/octet-stream';
+      try {
+        const data = fs.readFileSync(candidate);
+        res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache' });
+        res.end(data);
+        return;
+      } catch (e) {
+        // fall through to SPA fallback
+      }
+    }
+
+    // SPA fallback: serve index.html for any non-API, non-static route
+    const indexHtml = path.join(FRONTEND_DIST, 'index.html');
+    if (fs.existsSync(indexHtml)) {
+      try {
+        const data = fs.readFileSync(indexHtml);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.end(data);
+        return;
+      } catch (e) {}
+    }
   }
 
   // Not found
@@ -1268,42 +1320,71 @@ server.listen(PORT, () => {
     logger.info('SERVER', `  - ${sym} -> ${fp}`);
   }
 
-  // Pre-load default symbol NQ_Historical_Data to seed cache and database
-  const defaultSymbol = 'NQ_Historical_Data';
-  const filePath = symbolFiles.get(defaultSymbol);
-  if (filePath) {
-    logger.info('SERVER', `[Startup] Checking database seed status for: ${defaultSymbol}`);
-    
-    // Check if DB is already fully seeded with at least one completed run that contains events
-    let isSeeded = false;
+  // Pre-load ALL discovered symbols — check seed status and CSV file changes
+  for (const [symbol, filePath] of symbolFiles.entries()) {
+    logger.info('SERVER', `[Startup] Checking database seed status for: ${symbol}`);
+
+    // ── CSV file-change detection ──────────────────────────────────────────
+    // If the CSV file was modified AFTER the last pipeline run completed, the
+    // user has dropped new data. We must clear old bars + events and re-run
+    // the pipeline to prevent mixing old + new price data on the chart.
+    let csvChanged = false;
     try {
+      const csvMtime = fs.statSync(filePath).mtimeMs;
       const db = getDB();
-      const completedRun = db.prepare(`
-        SELECT r.run_id FROM research_runs r
-        JOIN structure_events e ON r.run_id = e.run_id
-        WHERE r.symbol = ? AND r.status = 'completed' AND r.run_id LIKE 'job_%'
-        LIMIT 1
-      `).get(defaultSymbol);
-      if (completedRun) {
-        const countRes = db.prepare('SELECT COUNT(*) as count FROM structure_events WHERE symbol = ?').get(defaultSymbol);
-        logger.info('SERVER', `[Startup] Database already seeded with ${countRes ? countRes.count : 0} events for ${defaultSymbol} (Run ID: ${completedRun.run_id}).`);
-        isSeeded = true;
+      const lastRun = db.prepare(`
+        SELECT completed_at FROM research_runs
+        WHERE symbol = ? AND status = 'completed'
+        ORDER BY completed_at DESC LIMIT 1
+      `).get(symbol);
+      if (lastRun && lastRun.completed_at) {
+        const runTime = new Date(lastRun.completed_at + 'Z').getTime();
+        if (csvMtime > runTime) {
+          csvChanged = true;
+          logger.info('SERVER', `[Startup] CSV file for ${symbol} modified after last pipeline run. Forcing re-sync.`);
+          // Clear ALL old data for this symbol
+          db.prepare('DELETE FROM market_bars WHERE symbol = ?').run(symbol);
+          db.prepare('DELETE FROM structure_events WHERE symbol = ?').run(symbol);
+          db.prepare('DELETE FROM liquidity_objects WHERE symbol = ?').run(symbol);
+          db.prepare('DELETE FROM research_runs WHERE symbol = ?').run(symbol);
+        }
       }
-    } catch (dbErr) {
-      logger.error('SERVER', 'Failed to check completed run status in DB', dbErr);
+    } catch (e) {
+      // If anything fails, fall through to normal seed check
     }
 
-    if (!isSeeded) {
-      logger.info('SERVER', `[Startup] Database not seeded or seeding was incomplete. Triggering background worker sync...`);
-      triggerWorkerSync(defaultSymbol, filePath, { mode: 'interactive', limitBars: 80000 });
+    // Check if DB is already fully seeded with at least one completed run that contains events
+    let isSeeded = false;
+    if (!csvChanged) {
+      try {
+        const db = getDB();
+        const completedRun = db.prepare(`
+          SELECT r.run_id FROM research_runs r
+          JOIN structure_events e ON r.run_id = e.run_id
+          WHERE r.symbol = ? AND r.status = 'completed' AND r.run_id LIKE 'job_%'
+          LIMIT 1
+        `).get(symbol);
+        if (completedRun) {
+          const countRes = db.prepare('SELECT COUNT(*) as count FROM structure_events WHERE symbol = ?').get(symbol);
+          logger.info('SERVER', `[Startup] Database already seeded with ${countRes ? countRes.count : 0} events for ${symbol} (Run ID: ${completedRun.run_id}).`);
+          isSeeded = true;
+        }
+      } catch (dbErr) {
+        logger.error('SERVER', 'Failed to check completed run status in DB', dbErr);
+      }
+    }
+
+    if (!isSeeded || csvChanged) {
+      logger.info('SERVER', `[Startup] ${csvChanged ? 'CSV changed — re-syncing' : 'Database not seeded — triggering'} background worker sync for ${symbol}...`);
+      triggerWorkerSync(symbol, filePath, { mode: 'interactive', limitBars: 80000 });
     } else {
       // Just warm the cache asynchronously on the main thread
-      logger.info('SERVER', `[Startup] Warming cache in background for: ${defaultSymbol}`);
+      logger.info('SERVER', `[Startup] Warming cache in background for: ${symbol}`);
       parseCsvFile(filePath).then(rawBars => {
-        cache.set(defaultSymbol, rawBars);
-        logger.info('SERVER', `[Startup] Cache warmed successfully for ${defaultSymbol}.`);
+        cache.set(symbol, rawBars);
+        logger.info('SERVER', `[Startup] Cache warmed successfully for ${symbol}.`);
       }).catch(err => {
-        logger.error('SERVER', `[Startup] Warming cache failed for ${defaultSymbol}`, err);
+        logger.error('SERVER', `[Startup] Warming cache failed for ${symbol}`, err);
       });
     }
   }
