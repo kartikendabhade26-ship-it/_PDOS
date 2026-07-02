@@ -2796,3 +2796,96 @@ body.dark-theme {
     gap: 4px;
   }
 }
+
+/* =========================================================================
+   DEALING RANGE LOADER OVERLAY
+   ========================================================================= */
+.dealing-range-loader-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(18, 22, 33, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+  pointer-events: auto;
+}
+
+.dealing-range-loader-card {
+  display: flex;
+  flex-direction: column;
+  background: rgba(30, 34, 45, 0.95);
+  border: 1px solid rgba(41, 98, 255, 0.4);
+  border-radius: 12px;
+  padding: 24px 32px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 20px rgba(41, 98, 255, 0.15);
+  width: 360px;
+  max-width: 90vw;
+  box-sizing: border-box;
+}
+
+.loader-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.loader-icon {
+  font-size: 24px;
+  animation: pulse-glow-dr 1.5s infinite ease-in-out;
+}
+
+.loader-card-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #f0f3fa;
+  letter-spacing: -0.2px;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 6px;
+  background-color: rgba(67, 70, 81, 0.5);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2962ff, #00e676);
+  border-radius: 3px;
+  transition: width 0.05s linear;
+}
+
+.time-metrics {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #b2b5be;
+}
+
+.metric-label {
+  color: #84878f;
+}
+
+.metric-value {
+  font-weight: 500;
+  font-family: monospace;
+  color: #f0f3fa;
+}
+
+@keyframes pulse-glow-dr {
+  0% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(41,98,255,0.4)); }
+  50% { transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(41,98,255,0.8)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(41,98,255,0.4)); }
+}

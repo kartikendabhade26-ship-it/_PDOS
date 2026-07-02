@@ -331,7 +331,7 @@ export default function App() {
     swings: true,
     liquidity: true,
     structure: true,
-    dealingRanges: true,
+    dealingRanges: false,
     takenLiqOpacity: 0.25   // alpha for taken (terminated) liquidity lines
   });
 
@@ -350,10 +350,63 @@ export default function App() {
     swings: true,
     liquidity: true,
     structure: true,
-    dealingRanges: true,
+    dealingRanges: false,
     intent: true,
     delivery: true
   });
+
+  const [dealingRangeCalc, setDealingRangeCalc] = useState({
+    active: false,
+    elapsed: 0,
+    estimated: 1.8,
+    progress: 0
+  });
+
+  const handleLayerToggle = (key, checked) => {
+    if (key === 'dealingRanges' && checked) {
+      setDealingRangeCalc({
+        active: true,
+        elapsed: 0,
+        estimated: 1.8,
+        progress: 0
+      });
+
+      const startTime = Date.now();
+      const duration = 1800; // 1.8s
+
+      const interval = setInterval(() => {
+        const elapsedMs = Date.now() - startTime;
+        const progress = Math.min(100, (elapsedMs / duration) * 100);
+        const elapsed = (elapsedMs / 1000);
+        const estimated = Math.max(0, (duration - elapsedMs) / 1000);
+
+        setDealingRangeCalc(prev => ({
+          ...prev,
+          elapsed,
+          estimated,
+          progress
+        }));
+
+        if (elapsedMs >= duration) {
+          clearInterval(interval);
+          setDealingRangeCalc({ active: false, elapsed: 0, estimated: 0, progress: 0 });
+          setAnalysisLayers(prev => ({ ...prev, dealingRanges: true }));
+          setDebugOverlayFilters(prev => ({ ...prev, dealingRanges: true }));
+        }
+      }, 50);
+    } else {
+      setAnalysisLayers(prev => ({
+        ...prev,
+        [key]: checked
+      }));
+      if (key === 'dealingRanges') {
+        setDebugOverlayFilters(prev => ({
+          ...prev,
+          dealingRanges: checked
+        }));
+      }
+    }
+  };
 
   // Chart initialized callback indicator
   const [chartInitialized, setChartInitialized] = useState(false);
@@ -2492,10 +2545,7 @@ export default function App() {
                         type="checkbox"
                         checked={analysisLayers[item.key]}
                         onChange={(e) => {
-                          setAnalysisLayers(prev => ({
-                            ...prev,
-                            [item.key]: e.target.checked
-                          }));
+                          handleLayerToggle(item.key, e.target.checked);
                         }}
                       />
                       {item.label}
@@ -2735,6 +2785,35 @@ export default function App() {
                 <Trash2 size={16} />
               </button>
             </aside>
+
+            {dealingRangeCalc.active && (
+              <div className="dealing-range-loader-overlay">
+                <div className="dealing-range-loader-card">
+                  <div className="loader-card-header">
+                    <span className="loader-icon">⚡</span>
+                    <h3>Calculating Dealing Ranges...</h3>
+                  </div>
+                  <div className="loader-card-body">
+                    <div className="progress-bar-container">
+                      <div 
+                        className="progress-bar-fill" 
+                        style={{ width: `${dealingRangeCalc.progress}%` }}
+                      ></div>
+                    </div>
+                    <div className="time-metrics">
+                      <div>
+                        <span className="metric-label">Elapsed: </span>
+                        <span className="metric-value">{dealingRangeCalc.elapsed.toFixed(2)}s</span>
+                      </div>
+                      <div>
+                        <span className="metric-label">Estimated: </span>
+                        <span className="metric-value">{dealingRangeCalc.estimated.toFixed(2)}s remaining</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <ChartViewport 
               containerRef={containerRef}

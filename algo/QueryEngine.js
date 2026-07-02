@@ -70,7 +70,15 @@ class QueryEngine {
 
         if (latestEvent && latestEvent.latest) {
           actualEnd = latestEvent.latest + timeframe * 60 * 200; // padding
-          actualStart = Math.max(1, actualEnd - timeframe * 60 * limit);
+          
+          // Use direct SQLite LIMIT to fetch exactly the latest limit bars ending at actualEnd
+          const rows = db.prepare(`
+            SELECT time_epoch as time, open, high, low, close, volume
+            FROM market_bars
+            WHERE symbol = ? COLLATE NOCASE AND timeframe = ? AND time_epoch <= ?
+            ORDER BY time_epoch DESC LIMIT ?
+          `).all(symbol, timeframe, actualEnd, limit);
+          return rows.reverse();
         }
       } catch (e) {
         // Fallback to defaults
