@@ -24,7 +24,25 @@ const {
   dailyCache
 } = require('./algo/dataLoader');
 
-const PORT = 8080;
+const PORT = process.env.PORT || 8080;
+
+const mimeTypes = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.eot': 'application/vnd.ms-fontobject',
+  '.otf': 'font/otf',
+  '.wasm': 'application/wasm'
+};
 
 let activeSyncWorker = null;
 
@@ -147,6 +165,29 @@ const server = http.createServer(async (req, res) => {
     });
     res.end();
     return;
+  }
+
+  // Serve built frontend assets from frontend/dist
+  if (!pathname.startsWith('/api/') && req.method === 'GET') {
+    const FRONTEND_DIST = path.join(__dirname, 'frontend', 'dist');
+    let relPath = decodeURIComponent(pathname);
+    if (relPath === '/' || relPath === '') {
+      relPath = '/index.html';
+    }
+    const candidate = path.join(FRONTEND_DIST, relPath);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      const mime = mimeTypes[path.extname(candidate).toLowerCase()] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' });
+      res.end(fs.readFileSync(candidate));
+      return;
+    }
+    // SPA fallback
+    const indexHtml = path.join(FRONTEND_DIST, 'index.html');
+    if (fs.existsSync(indexHtml)) {
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Access-Control-Allow-Origin': '*' });
+      res.end(fs.readFileSync(indexHtml));
+      return;
+    }
   }
 
 
@@ -1069,6 +1110,122 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+
+  // ─── LABELS: GET /api/algo/labels ──────────────────────────────────────
+  if (pathname === '/api/algo/labels' && req.method === 'GET') {
+    const LABELS_FILE = path.join(__dirname, 'algo', 'labels', 'human_labels.json');
+    try {
+      if (fs.existsSync(LABELS_FILE)) {
+        const data = fs.readFileSync(LABELS_FILE, 'utf8');
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(data);
+      } else {
+        sendJSON(res, []);
+      }
+    } catch (err) {
+      logger.error('SERVER', 'Error loading labels', err);
+      sendJSON(res, { success: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  // ─── LABELS: POST /api/algo/labels ─────────────────────────────────────
+  if (pathname === '/api/algo/labels' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body);
+        const LABELS_FILE = path.join(__dirname, 'algo', 'labels', 'human_labels.json');
+        
+        const labelsDir = path.dirname(LABELS_FILE);
+        if (!fs.existsSync(labelsDir)) {
+          fs.mkdirSync(labelsDir, { recursive: true });
+        }
+
+        let existing = [];
+        if (fs.existsSync(LABELS_FILE)) {
+          const raw = fs.readFileSync(LABELS_FILE, 'utf8');
+          try { existing = JSON.parse(raw); } catch (e) {}
+        }
+
+        // Add saved_at timestamp to each label
+        const newLabels = (parsed.labels || []).map(l => ({
+          ...l,
+          saved_at: new Date().toISOString()
+        }));
+
+        existing = existing.concat(newLabels);
+        fs.writeFileSync(LABELS_FILE, JSON.stringify(existing, null, 2), 'utf8');
+        sendJSON(res, { success: true, count: newLabels.length });
+      } catch (err) {
+        logger.error('SERVER', 'Error saving labels', err);
+        sendJSON(res, { success: false, error: err.message }, 400);
+      }
+    });
+    return;
+  }
+
+  // ─── AI SWINGS: GET /api/ai/swings ──────────────────────────────────────
+  if (pathname === '/api/ai/swings' && req.method === 'GET') {
+    const symbol = urlObj.searchParams.get('symbol') || 'NQ_Historical_Data';
+    const tf = parseInt(urlObj.searchParams.get('timeframe') || '1', 10);
+    const minScore = parseInt(urlObj.searchParams.get('min_score') || '40', 10);
+    const limit = parseInt(urlObj.searchParams.get('limit') || '500', 10);
+    
+    try {
+      // 1. Fetch bars
+      const QueryEngine = require('./algo/QueryEngine');
+      const bars = QueryEngine.getCandles('run_legacy', symbol, tf, null, null, limit * 10);
+      if (!bars || bars.length === 0) {
+        sendJSON(res, []);
+        return;
+      }
+      
+      // 2. Fetch HTF swings for alignment
+      let htfTf = 15;
+      if (tf === 1) htfTf = 15;
+      else if (tf === 5) htfTf = 60;
+      else if (tf === 15) htfTf = 240;
+      else if (tf === 60) htfTf = 1440;
+      else htfTf = 1440;
+      
+      const htfSwings = QueryEngine.getEvents('run_legacy', symbol, htfTf, null, null, 1000);
+      
+      // 3. Detect AI swings
+      const AISwingEngine = require('./algo/engines/aiSwingEngine');
+      const aiSwingEngine = new AISwingEngine();
+      aiSwingEngine.timeframe = tf;
+      
+      const results = aiSwingEngine.detect(bars, { minScore }, {
+        symbol,
+        preComputedSwingsHTF: htfSwings
+      });
+      
+      sendJSON(res, results.slice(-limit));
+    } catch (err) {
+      logger.error('SERVER', 'Error fetching AI swings', err);
+      sendJSON(res, { success: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  // ─── AI SWINGS: GET /api/ai/swings/factors ──────────────────────────────
+  if (pathname === '/api/ai/swings/factors' && req.method === 'GET') {
+    sendJSON(res, {
+      factors: [
+        { name: 'fractal', weight: 25, description: '3-bar fractal = 0.5, 5-bar = 1.0' },
+        { name: 'volume', weight: 15, description: 'Pivot volume vs 20-bar average volume' },
+        { name: 'displacement', weight: 20, description: 'Move size into pivot, ATR-normalized' },
+        { name: 'sweep', weight: 15, description: 'Sweeps a prior swing high/low within 0.1 ATR' },
+        { name: 'rsi', weight: 10, description: 'RSI-14 divergence at the pivot point' },
+        { name: 'session', weight: 5, description: 'London / NY AM session timing alignment' },
+        { name: 'htf', weight: 10, description: 'Aligned with HTF structure swing direction' }
+      ]
+    });
+    return;
+  }
+
   // Not found
   res.writeHead(404, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
   res.end('Not Found');

@@ -711,7 +711,7 @@ export default function FloatingToolbar({
             };
             
             try {
-              const res = await fetch(`http://localhost:8080/api/algo/labels`, {
+              const res = await fetch(`/api/algo/labels`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ concept, labels: [label] })

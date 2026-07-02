@@ -4,9 +4,11 @@ const readline = require('readline');
 const { getESTOffset } = require('./utils/math/time');
 
 const SCAN_DIRS = [
+  process.env.PDOS_DATA_DIR,
+  path.join(__dirname, '..', 'data'),
   "D:\\nijna data\\Project 1 MNQ data",
   "D:\\nijna data"
-];
+].filter(Boolean);
 
 // In-memory cache for parsed 1m bars
 const cache = new Map();

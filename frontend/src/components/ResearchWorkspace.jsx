@@ -62,7 +62,7 @@ export default function ResearchWorkspace({
     if (!isExport) setLoading(true);
     
     // Construct query parameters
-    let url = `http://localhost:8080/api/research/query?symbol=${activeSymbol}`;
+    let url = `/api/research/query?symbol=${activeSymbol}`;
     
     if (checkedTfs.length > 0) url += `&timeframe=${checkedTfs.join(',')}`;
     if (checkedSessions.length > 0) url += `&session=${checkedSessions.join(',')}`;

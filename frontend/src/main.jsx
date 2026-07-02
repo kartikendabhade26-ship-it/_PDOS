@@ -28,7 +28,7 @@ const origError = console.error;
 console.error = (...args) => {
   origError(...args);
   const msg = "[ERROR] " + args.map(safeStringify).join(' ');
-  fetch('http://localhost:8080/api/log', {
+  fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ msg })
@@ -37,7 +37,7 @@ console.error = (...args) => {
 
 window.addEventListener('error', (event) => {
   const msg = `[UNCAUGHT CLIENT ERROR] ${event.message} at ${event.filename}:${event.lineno}:${event.colno}`;
-  fetch('http://localhost:8080/api/log', {
+  fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ msg })
@@ -46,7 +46,7 @@ window.addEventListener('error', (event) => {
 
 window.addEventListener('unhandledrejection', (event) => {
   const msg = `[UNCAUGHT CLIENT REJECTION] ${event.reason}`;
-  fetch('http://localhost:8080/api/log', {
+  fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ msg })

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Sparkles, HelpCircle, Trash2, Bot, User, CornerDownLeft } from 'lucide-react';
 
-const API = 'http://localhost:8080';
+const API = '';
 
 const SUGGESTIONS = [
   "Find bullish FVGs in NY AM session",

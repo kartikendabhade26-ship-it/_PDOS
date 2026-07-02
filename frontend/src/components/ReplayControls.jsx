@@ -177,6 +177,40 @@ export default function ReplayControls({
         )}
       </button>
 
+      {/* Time-Machine Scrubber */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: '1 1 auto', margin: '0 8px', borderLeft: '1px solid #2a2e39', paddingLeft: '8px' }}>
+        <span style={{ fontSize: '10px', color: '#787b86', fontFamily: 'Outfit, sans-serif' }}>
+          {replayIndex}/{allBars.length}
+        </span>
+        <input
+          type="range"
+          min="1"
+          max={allBars.length || 1}
+          value={replayIndex}
+          onChange={(e) => {
+            const idx = parseInt(e.target.value, 10);
+            setReplayIndex(idx);
+            setCurrentSubStep(0);
+          }}
+          style={{
+            flex: '1 1 auto',
+            cursor: 'pointer',
+            height: '4px',
+            borderRadius: '2px',
+            outline: 'none',
+            WebkitAppearance: 'none',
+            background: `linear-gradient(to right, #2962ff 0%, #2962ff ${(replayIndex / (allBars.length || 1)) * 100}%, #2a2e39 ${(replayIndex / (allBars.length || 1)) * 100}%, #2a2e39 100%)`
+          }}
+          className="replay-scrubber"
+          title="Drag to scrub replay time"
+        />
+        {currentBar && (
+          <span style={{ fontSize: '10px', color: '#b2b5be', fontFamily: 'Outfit, sans-serif', whiteSpace: 'nowrap' }}>
+            {new Date(currentBar.time * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })}
+          </span>
+        )}
+      </div>
+
       {/* Timeframe selector dropdown */}
       <div style={{ position: 'relative' }}>
         <button

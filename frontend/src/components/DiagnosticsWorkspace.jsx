@@ -31,7 +31,7 @@ export default function DiagnosticsWorkspace({ activeSymbol }) {
   // Fetch telemetry from server
   const fetchTelemetry = async () => {
     try {
-      const res = await fetch('http://localhost:8080/api/diagnostics/telemetry');
+      const res = await fetch('/api/diagnostics/telemetry');
       if (!res.ok) throw new Error('Failed to fetch telemetry');
       const data = await res.json();
       if (data.success) {
@@ -49,7 +49,7 @@ export default function DiagnosticsWorkspace({ activeSymbol }) {
   // Fetch logs from server
   const fetchLogs = async () => {
     try {
-      const res = await fetch(`http://localhost:8080/api/diagnostics/logs?limit=${logLimit}`);
+      const res = await fetch(`/api/diagnostics/logs?limit=${logLimit}`);
       if (!res.ok) throw new Error('Failed to fetch system logs');
       const data = await res.json();
       if (data.logs) {

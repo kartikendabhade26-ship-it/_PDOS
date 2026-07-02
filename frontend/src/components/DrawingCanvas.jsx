@@ -483,6 +483,33 @@ export default function DrawingCanvas({
     window.addEventListener('keydown', handleKeyDown, { passive: true });
     window.addEventListener('keyup', handleKeyUp, { passive: true });
 
+    // Listen for window devicePixelRatio changes (DPR Mismatch Fix)
+    let dprMediaQuery = null;
+    const handleDprChange = () => {
+      updateCanvasSize();
+      schedulerRef.current.markAllDirty();
+      setupDprListener(); // re-subscribe for the new resolution boundary
+    };
+
+    const setupDprListener = () => {
+      if (dprMediaQuery) {
+        try {
+          dprMediaQuery.removeEventListener('change', handleDprChange);
+        } catch (e) {
+          try { dprMediaQuery.removeListener(handleDprChange); } catch (_) {}
+        }
+      }
+      const dpr = window.devicePixelRatio || 1;
+      dprMediaQuery = window.matchMedia(`(resolution: ${dpr}dppx)`);
+      try {
+        dprMediaQuery.addEventListener('change', handleDprChange);
+      } catch (e) {
+        try { dprMediaQuery.addListener(handleDprChange); } catch (_) {}
+      }
+    };
+
+    setupDprListener();
+
     // Call draw immediately
     schedulerRef.current.markAllDirty();
     if (onRenderCompleted) {
@@ -496,6 +523,13 @@ export default function DrawingCanvas({
         }
       } catch (e) {}
       observer.disconnect();
+      if (dprMediaQuery) {
+        try {
+          dprMediaQuery.removeEventListener('change', handleDprChange);
+        } catch (e) {
+          try { dprMediaQuery.removeListener(handleDprChange); } catch (_) {}
+        }
+      }
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
@@ -2105,6 +2139,7 @@ export default function DrawingCanvas({
     let animationFrameId;
 
     const checkPriceScale = () => {
+      if (!isMountedRef.current) return;
       if (series) {
         try {
           const topPrice = series.coordinateToPrice(0);
@@ -2118,7 +2153,9 @@ export default function DrawingCanvas({
           // Series might be disposed, ignore
         }
       }
-      animationFrameId = requestAnimationFrame(checkPriceScale);
+      if (isMountedRef.current) {
+        animationFrameId = requestAnimationFrame(checkPriceScale);
+      }
     };
 
     animationFrameId = requestAnimationFrame(checkPriceScale);
@@ -2372,6 +2409,15 @@ export default function DrawingCanvas({
       const labelOccupied = new Set();
       let selectedDrawn = false;
       
+      filtered.sort((a, b) => {
+        const degA = a.properties?.degree || (a.concept_label && {STH:1,STL:1,ITH:2,ITL:2,LTH:3,LTL:3}[a.concept_label]) || 0;
+        const degB = b.properties?.degree || (b.concept_label && {STH:1,STL:1,ITH:2,ITL:2,LTH:3,LTL:3}[b.concept_label]) || 0;
+        if (degA !== degB) return degB - degA; // HTF first (drawn first = background)
+        const ta = a.timeStart !== undefined ? a.timeStart : a.time;
+        const tb = b.timeStart !== undefined ? b.timeStart : b.time;
+        return ta - tb; // Chronological within same degree
+      });
+
       filtered.forEach(obj => {
         // Sort/Label Occupied Claim check (swings vs other)
         const isSelected = selectedAlgoCandidateRef.current && selectedAlgoCandidateRef.current.id === obj.id;

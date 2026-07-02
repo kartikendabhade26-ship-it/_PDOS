@@ -605,7 +605,7 @@ export default function App() {
 
     // Fetch symbols with retry
     const fetchSymbols = (retriesLeft = 15) => {
-      fetch('http://localhost:8080/api/symbols')
+      fetch('/api/symbols')
         .then(res => res.json())
         .then(data => {
           setSymbols(data);
@@ -669,9 +669,9 @@ export default function App() {
     if (capturedOffset) {
       const startSec = capturedOffset - 8000 * tfSec;
       const endSec   = capturedOffset + 500  * tfSec;
-      dataUrl = `http://localhost:8080/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=10000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=10000&mode=${activeResearchMode}`;
     } else {
-      dataUrl = `http://localhost:8080/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=10000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=10000&mode=${activeResearchMode}`;
     }
 
     // 2. Events URL
@@ -681,9 +681,9 @@ export default function App() {
     if (capturedOffset) {
       const startSec = capturedOffset - 8000 * tfSec;
       const endSec   = capturedOffset + 500  * tfSec;
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
     } else {
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
     }
 
     // Fetch both datasets concurrently for an atomic transaction commit
@@ -742,7 +742,7 @@ export default function App() {
     setLoadingState2({ candles: true, events: true });
     setChart2Ready(false);
 
-    let dataUrl = `http://localhost:8080/api/data?symbol=${activeSymbol}&timeframe=${timeframe2}&limit=10000&mode=${activeResearchMode}`;
+    let dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe2}&limit=10000&mode=${activeResearchMode}`;
     
     const limit = 15000;
     const conceptParam = '';
@@ -751,9 +751,9 @@ export default function App() {
       const tfSec = timeframe2 * 60;
       const startSec = replayTimeOffset - 8000 * tfSec;
       const endSec   = replayTimeOffset + 500  * tfSec;
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
     } else {
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
     }
 
     Promise.all([
@@ -846,7 +846,7 @@ export default function App() {
     const cand = selectedAlgoCandidate;
 
     try {
-      const res = await fetch(`http://localhost:8080/api/validations`, {
+      const res = await fetch(`/api/validations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ eventId: cand.id, status, notes })
@@ -1218,7 +1218,7 @@ export default function App() {
 
     try {
       const mode = activeResearchMode || 'interactive';
-      const url = `http://localhost:8080/api/query/visible-window?symbol=${symbol}&timeframe=${tf}&start=${queryStart}&end=${queryEnd}&mode=${mode}`;
+      const url = `/api/query/visible-window?symbol=${symbol}&timeframe=${tf}&start=${queryStart}&end=${queryEnd}&mode=${mode}`;
       
       const res = await fetch(url);
       const data = await res.json();
@@ -1338,7 +1338,7 @@ export default function App() {
   const handleTriggerSync = async () => {
     try {
       setIsProgressOverlayVisible(true);
-      const res = await fetch(`http://localhost:8080/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limitBarsInteractive}`);
+      const res = await fetch(`/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limitBarsInteractive}`);
       const data = await res.json();
       if (!data.success) {
         alert("Failed to start sync: " + data.message);
@@ -1356,7 +1356,7 @@ export default function App() {
     let reloadTimer = null;
     const poll = async () => {
       try {
-        const res = await fetch(`http://localhost:8080/api/algo/sync/progress?symbol=${activeSymbol}&mode=${activeResearchMode}`);
+        const res = await fetch(`/api/algo/sync/progress?symbol=${activeSymbol}&mode=${activeResearchMode}`);
         const data = await res.json();
         if (data && data.success) {
           setSyncProgress(data);
@@ -2579,7 +2579,7 @@ export default function App() {
               onClick={async () => {
                 try {
                   const limit = activeResearchMode === 'interactive' ? limitBarsInteractive : '';
-                  const url = `http://localhost:8080/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limit}`;
+                  const url = `/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limit}`;
                   
                   setSyncProgress({
                     status: 'processing',

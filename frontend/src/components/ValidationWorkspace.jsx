@@ -34,7 +34,7 @@ export default function ValidationWorkspace({
 
   const fetchEvents = () => {
     setLoading(true);
-    let url = `http://localhost:8080/api/research/query?symbol=${activeSymbol}&limit=250`;
+    let url = `/api/research/query?symbol=${activeSymbol}&limit=250`;
     if (statusFilter === 'pending') {
       // Pending validations have no validation status in DB
       url += `&state=active,mitigated`;
@@ -125,7 +125,7 @@ export default function ValidationWorkspace({
     });
 
     try {
-      const res = await fetch(`http://localhost:8080/api/validations`, {
+      const res = await fetch(`/api/validations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
