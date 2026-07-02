@@ -2340,8 +2340,22 @@ export default function DrawingCanvas({
 
       const swingsFlag = FeatureFlags.get('primitive_manager.swings');
 
+      // Read toolbar toggle states
+      const showDealingRanges = debugOverlayFiltersRef.current?.dealingRanges !== false;
+      const showSwings        = debugOverlayFiltersRef.current?.swings !== false;
+      const showLiquidity     = debugOverlayFiltersRef.current?.liquidity !== false;
+
       const filtered = visibleObjects.filter(obj => {
         const isSwing = obj.type === 'swing' || obj.type === 'strong_swing' || obj.type === 'swing_high' || obj.type === 'swing_low';
+        const isLiquidity = obj.type === 'liquidity' || obj.type === 'liquidity_object';
+        const isDealingRange = obj.type === 'dealing_range';
+
+        // Hide if toggled off in toolbar
+        if (!showDealingRanges && isDealingRange) return false;
+        if (!showSwings && isSwing) return false;
+        if (!showLiquidity && isLiquidity) return false;
+
+        // Hide swings that are handled by PrimitiveManager (native series markers)
         if (isSwing && swingsFlag === 'on') {
           return false;
         }
@@ -2350,6 +2364,7 @@ export default function DrawingCanvas({
         const targetLayer = renderer?.layer || 'ZonesLayer';
         return targetLayer === layerName;
       });
+
 
       const labelOccupied = new Set();
       let selectedDrawn = false;

@@ -1608,9 +1608,13 @@ export default function App() {
           setTimeout(() => {
             if (chartRef.current && displayBars.length > 0) {
               const timeScale = chartRef.current.timeScale();
+              // Default to 1-month visible window (30 days back from last bar)
+              const lastBarTime = displayBars[displayBars.length - 1].time;
+              const oneMonthAgo = lastBarTime - 30 * 24 * 3600;
+              const fromBar = displayBars.find(b => b.time >= oneMonthAgo) || displayBars[0];
               timeScale.setVisibleRange({
-                from: displayBars[Math.max(0, displayBars.length - 150)].time,
-                to: displayBars[displayBars.length - 1].time
+                from: fromBar.time,
+                to: lastBarTime
               });
             }
           }, 50);
@@ -2219,6 +2223,15 @@ export default function App() {
           title="Toggle Liquidity line rendering (BSL / SSL)"
         >
           Liquidity
+        </button>
+
+        {/* Dealing Range Toggle */}
+        <button
+          className={`toolbar-btn ${debugOverlayFilters.dealingRanges ? 'active' : ''}`}
+          onClick={() => setDebugOverlayFilters(f => ({ ...f, dealingRanges: !f.dealingRanges }))}
+          title="Toggle Dealing Range boxes (0% / 25% / 50% / 75% / 100% levels)"
+        >
+          Dealing Range
         </button>
 
         {debugOverlayFilters.liquidity && (
