@@ -307,6 +307,7 @@ body {
   width: 100%;
   height: 100%;
   position: relative;
+  padding-top: 28px;
 }
 
 #chart-target {
@@ -461,6 +462,8 @@ body {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .bottom-tf-btn {
@@ -480,6 +483,16 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.status-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+  display: inline-block;
 }
 
 .status-indicator {
@@ -499,19 +512,22 @@ body {
 /* --- HUD INFO BOX (OHLCV) --- */
 .hud-ohlc {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 12px;
   font-size: 11px;
   color: var(--text-muted);
-  background-color: rgba(19, 23, 34, 0.7);
-  padding: 6px 12px;
-  border-radius: 4px;
+  background-color: var(--panel);
+  padding: 0 16px;
+  border-radius: 0;
   z-index: 3;
   pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.03);
+  border: none;
+  border-bottom: 1px solid var(--border);
 }
 
 .hud-ohlc span {
@@ -535,30 +551,60 @@ body {
 /* --- SESSIONS OVERLAY LIST --- */
 .sessions-list-indicator {
   position: absolute;
-  bottom: 12px;
-  left: 12px;
+  top: 0;
+  right: 16px;
+  height: 28px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  z-index: 3;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  z-index: 4;
   pointer-events: none;
 }
 
 .session-indicator-badge {
-  background-color: rgba(19, 23, 34, 0.85);
-  border: 1px solid var(--border);
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 10px;
+  background-color: transparent;
+  border: 1px solid transparent;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 500;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  color: var(--text-muted);
+  transition: all 0.15s ease;
+}
+
+.session-indicator-badge.active {
+  border-color: var(--accent);
+  background-color: var(--accent-light);
+  color: var(--accent);
 }
 
 .session-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
+}
+
+/* Responsive Status Bar Breakpoints */
+@media (max-width: 1100px) {
+  .bottom-bar .bottom-left-group span:first-child, /* Range label */
+  .bottom-bar .bottom-tf-btn:nth-child(2), /* 5D */
+  .bottom-bar .bottom-tf-btn:nth-child(4) { /* 3M */
+    display: none !important;
+  }
+}
+@media (max-width: 900px) {
+  .bottom-bar {
+    padding: 0 8px;
+    font-size: 10px;
+  }
+  .bottom-bar .bottom-tf-btn {
+    padding: 1px 4px;
+    font-size: 10px;
+  }
 }
 
 /* --- SETTINGS MODAL --- */

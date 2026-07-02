@@ -956,28 +956,49 @@ export default function App() {
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: gridColor, visible: chartSettings.showGridLines },
-        horzLines: { color: gridColor, visible: chartSettings.showGridLines },
+        vertLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
+        horzLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          visible: false,
-          labelVisible: false,
+          visible: true,
+          labelVisible: true,
+          color: '#787b86',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#363a45',
         },
         horzLine: {
-          visible: false,
-          labelVisible: false,
+          visible: true,
+          labelVisible: true,
+          color: '#787b86',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#363a45',
         },
       },
       rightPriceScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         scaleMargins: { top: 0.08, bottom: 0.2 },
+        ensureEdgeTickMarksVisible: true,
       },
       timeScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const d = new Date(time * 1000);
+          const h = String(d.getUTCHours()).padStart(2, '0');
+          const m = String(d.getUTCMinutes()).padStart(2, '0');
+          if (tickMarkType === 0 || tickMarkType === 1) return `${h}:${m}`;
+          if (tickMarkType === 2) {
+            const mon = String(d.getUTCMonth()+1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            return `${mon}-${day}`;
+          }
+          return `${h}:${m}`;
+        }
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -1129,22 +1150,49 @@ export default function App() {
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: gridColor, visible: chartSettings.showGridLines },
-        horzLines: { color: gridColor, visible: chartSettings.showGridLines },
+        vertLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
+        horzLines: { color: gridColor, visible: chartSettings.showGridLines, style: 1 },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { visible: false, labelVisible: false },
-        horzLine: { visible: false, labelVisible: false },
+        vertLine: {
+          visible: true,
+          labelVisible: true,
+          color: '#787b86',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#363a45',
+        },
+        horzLine: {
+          visible: true,
+          labelVisible: true,
+          color: '#787b86',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#363a45',
+        },
       },
       rightPriceScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         scaleMargins: { top: 0.08, bottom: 0.2 },
+        ensureEdgeTickMarksVisible: true,
       },
       timeScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const d = new Date(time * 1000);
+          const h = String(d.getUTCHours()).padStart(2, '0');
+          const m = String(d.getUTCMinutes()).padStart(2, '0');
+          if (tickMarkType === 0 || tickMarkType === 1) return `${h}:${m}`;
+          if (tickMarkType === 2) {
+            const mon = String(d.getUTCMonth()+1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            return `${mon}-${day}`;
+          }
+          return `${h}:${m}`;
+        }
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -1437,9 +1485,14 @@ export default function App() {
           borderDownColor,
           wickUpColor,
           wickDownColor,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
         });
       } else if (chartType === 'bar') {
-        series2Ref.current = chart2.addSeries(BarSeries, { upColor, downColor });
+        series2Ref.current = chart2.addSeries(BarSeries, {
+          upColor,
+          downColor,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
+        });
       } else {
         series2Ref.current = chart2.addSeries(LineSeries, { color: themeColor, lineWidth: 2 });
       }
@@ -1482,7 +1535,7 @@ export default function App() {
       volume2Ref.current.setData(displayBars.map(b => ({
         time: b.time,
         value: b.volume,
-        color: b.close >= b.open ? 'rgba(8, 153, 129, 0.2)' : (isDarkMode ? 'rgba(242, 54, 69, 0.2)' : 'rgba(19, 23, 34, 0.2)')
+        color: b.close >= b.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
       })));
     }
   };
@@ -1554,11 +1607,13 @@ export default function App() {
           borderDownColor: borderDownColor,
           wickUpColor: wickUpColor,
           wickDownColor: wickDownColor,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
         });
       } else if (chartType === 'bar') {
         seriesRef.current = chart.addSeries(BarSeries, {
           upColor: upColor,
           downColor: downColor,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 }
         });
       } else {
         seriesRef.current = chart.addSeries(LineSeries, {
@@ -1614,7 +1669,7 @@ export default function App() {
       volumeRef.current.setData(displayBars.map(b => ({
         time: b.time,
         value: b.volume,
-        color: b.close >= b.open ? 'rgba(8, 153, 129, 0.2)' : (isDarkMode ? 'rgba(242, 54, 69, 0.2)' : 'rgba(19, 23, 34, 0.2)')
+        color: b.close >= b.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
       })));
     }
 

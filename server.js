@@ -1214,13 +1214,12 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/ai/swings/factors' && req.method === 'GET') {
     sendJSON(res, {
       factors: [
-        { name: 'fractal', weight: 25, description: '3-bar fractal = 0.5, 5-bar = 1.0' },
-        { name: 'volume', weight: 15, description: 'Pivot volume vs 20-bar average volume' },
-        { name: 'displacement', weight: 20, description: 'Move size into pivot, ATR-normalized' },
-        { name: 'sweep', weight: 15, description: 'Sweeps a prior swing high/low within 0.1 ATR' },
-        { name: 'rsi', weight: 10, description: 'RSI-14 divergence at the pivot point' },
+        { name: 'fractal', weight: 30, description: '3-bar fractal = 0.5, 5-bar = 1.0' },
+        { name: 'volume', weight: 20, description: 'Pivot volume vs 20-bar average volume' },
+        { name: 'displacement', weight: 25, description: 'Move size into pivot (0.5% of price travel threshold)' },
+        { name: 'sweep', weight: 15, description: 'Sweeps a prior swing high/low within raw 2.0 price points' },
         { name: 'session', weight: 5, description: 'London / NY AM session timing alignment' },
-        { name: 'htf', weight: 10, description: 'Aligned with HTF structure swing direction' }
+        { name: 'htf', weight: 5, description: 'Aligned with HTF structure swing direction' }
       ]
     });
     return;
