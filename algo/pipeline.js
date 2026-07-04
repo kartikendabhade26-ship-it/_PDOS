@@ -217,7 +217,7 @@ function getEmptyOutcome() {
  * establishes parent-child nesting chains, and saves to DB in transactions.
  */
 async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkInfo = null, progressCallback = null) {
-  const dbName = process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db';
+  const dbName = process.env.PDOS_DB_NAME || (process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db');
   logger.info('PIPELINE', `Starting sync pipeline for symbol: ${symbol} (${rawBars.length} bars) (Run: ${runId})`);
   const t0 = Date.now();
 
