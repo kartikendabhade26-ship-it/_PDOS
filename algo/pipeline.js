@@ -1298,7 +1298,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   logger.info('PIPELINE', 'Building Dealing Range relationships...');
   const tRelDbStart = Date.now();
   RegistryService.executeInTransaction(() => {
-    const allRanges = allEvents.filter(e => e.concept === 'dealing_range');
+    const allRanges = allEvents.filter(e => e.concept === 'dealing_range' && e.state !== 'candidate_rejected');
     const allPdArrays = allEvents.filter(e => e.concept === 'fvg' || e.concept === 'ifvg' || e.concept === 'ob' || e.concept === 'breaker' || e.concept === 'pd_array_matrix');
 
     // Group ranges by timeframe for fast lower-timeframe lookup
