@@ -1338,10 +1338,11 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
         for (const childRange of childRanges) {
           if (childRange.id === range.id) continue;
 
+          // Prune out-of-time-bounds ranges immediately (extremely fast check)
+          if (childRange.timeStart < rStart || (childRange.timeEnd || childRange.timeStart) > rEnd) continue;
+
           if (childRange.priceLow >= rLow &&
-              childRange.priceHigh <= rHigh &&
-              childRange.timeStart >= rStart &&
-              (childRange.timeEnd || childRange.timeStart) <= rEnd) {
+              childRange.priceHigh <= rHigh) {
             // range contains childRange
             insertRelationship.run(runId, range.id, childRange.id, 'contains');
             // childRange nested_inside range
