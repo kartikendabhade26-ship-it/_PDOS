@@ -14,6 +14,9 @@ function getDB(dbName) {
     logger.info('DATABASE', `Initializing SQLite database at: ${targetPath}`);
     db = new DatabaseSync(targetPath);
     dbInstances.set(targetPath, db);
+    try {
+      db.exec('PRAGMA busy_timeout = 10000;');
+    } catch (e) {}
     migrateSchema(db, targetPath);
     initTables(db);
   }
