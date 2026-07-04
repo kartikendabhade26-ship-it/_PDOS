@@ -6,7 +6,7 @@ const logger = require('./logger');
 const dbInstances = new Map();
 
 function getDB(dbName) {
-  const targetName = dbName || (process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db');
+  const targetName = dbName || process.env.PDOS_DB_NAME || (process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db');
   const targetPath = path.isAbsolute(targetName) ? targetName : path.join(__dirname, '..', targetName);
   
   let db = dbInstances.get(targetPath);
