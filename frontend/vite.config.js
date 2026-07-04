@@ -9,9 +9,9 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      // All API calls go to the Node.js backend on :8080
+      // All API calls go to the Node.js backend on :3000
       '/api': {
-        target: process.env.PDOS_BACKEND_URL || 'http://localhost:8080',
+        target: process.env.PDOS_BACKEND_URL || 'http://localhost:3000',
         changeOrigin: true,
         secure: false
       }

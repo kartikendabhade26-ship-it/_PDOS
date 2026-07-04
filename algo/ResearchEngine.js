@@ -59,7 +59,8 @@ class ResearchEngine {
 
       logger.info('RESEARCH_ENGINE', `Loading historical bars dataset: ${filePath}`);
       const limitBars = config.limitBars || null;
-      const rawBars = await parseCsvFile(filePath, false, limitBars);
+      const forceFull = config.mode === 'batch' || !limitBars;
+      const rawBars = await parseCsvFile(filePath, forceFull, limitBars);
       logger.info('RESEARCH_ENGINE', `Loaded ${rawBars.length} total bars. Invoking execution pipeline...`);
 
       // 2. Run execution pipeline

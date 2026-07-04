@@ -244,7 +244,7 @@ export default function DrawingCanvas({
       if (flag === 'primitive_manager.swings') {
         const cands = algoCandidates || [];
         if (primitiveManagerRef.current) {
-          if (state === 'on' || state === 'shadow') {
+          if ((state === 'on' || state === 'shadow') && analysisLayersRef.current?.swings !== false) {
             const swings = cands.filter(c => 
               c.type === 'swing' || c.type === 'strong_swing' || c.type === 'swing_high' || c.type === 'swing_low'
             );
@@ -293,7 +293,7 @@ export default function DrawingCanvas({
     // Sync series primitives using PrimitiveManager if feature flag is active
     const swingsFlag = FeatureFlags.get('primitive_manager.swings');
     if (primitiveManagerRef.current) {
-      if (swingsFlag === 'on' || swingsFlag === 'shadow') {
+      if ((swingsFlag === 'on' || swingsFlag === 'shadow') && analysisLayersRef.current?.swings !== false) {
         const swings = cands.filter(c => 
           c.type === 'swing' || c.type === 'strong_swing' || c.type === 'swing_high' || c.type === 'swing_low'
         );
@@ -2411,10 +2411,55 @@ export default function DrawingCanvas({
         liquidityStatesRef.current.terminatedTimes
       );
 
+      // Filter dealing ranges to keep only the single most recent active and completed ones
+      const visibleRanges = visibleObjects.filter(obj => {
+        if (obj.type !== 'dealing_range') return false;
+        if (limit !== null && limit !== Infinity) {
+          const confTime = obj.properties?.confirmation_time || obj.timeConfirm || obj.time;
+          if (confTime > limit) return false;
+        }
+        return true;
+      });
+      const sortedRanges = [...visibleRanges].sort((a, b) => (b.timeStart || b.time) - (a.timeStart || a.time));
+      const activeRange = sortedRanges.find(r => r.state === 'active' || r.state === 'developing');
+      const completedRange = sortedRanges.find(r => r.state === 'completed');
+      
+      if (activeRange) {
+        activeRange.isMostRecent = true;
+      }
+
+      const allowedDealingRangeIds = new Set();
+      if (activeRange) allowedDealingRangeIds.add(activeRange.id);
+      if (completedRange) allowedDealingRangeIds.add(completedRange.id);
+
       const swingsFlag = FeatureFlags.get('primitive_manager.swings');
 
       const filtered = visibleObjects.filter(obj => {
+        const layers = analysisLayersRef.current || {};
+        
         const isSwing = obj.type === 'swing' || obj.type === 'strong_swing' || obj.type === 'swing_high' || obj.type === 'swing_low';
+        const isLiquidity = obj.type === 'liquidity' || obj.type === 'liquidity_pool' || obj.type === 'liquidity_sweep' || obj.type === 'liquidity_object';
+        const isStructure = obj.type === 'bos' || obj.type === 'choch' || obj.type === 'mss' || obj.type === 'break_of_structure' || obj.type === 'structure_confirm';
+        const isIntent = obj.type === 'intent' || obj.type === 'displacement';
+        const isDelivery = obj.type === 'fvg' || obj.type === 'ifvg' || obj.type === 'ob' || obj.type === 'breaker' || obj.type === 'pd_array_matrix';
+        const isDealingRange = obj.type === 'dealing_range';
+
+        if (isDealingRange) {
+          if (layers.dealingRanges === false) return false;
+          if (obj.timeEnd && layers.showHistoricalRanges === false && (!selectedAlgoCandidateRef.current || selectedAlgoCandidateRef.current.id !== obj.id)) {
+            return false;
+          }
+          if (limit !== null && limit !== Infinity) {
+            const confTime = obj.properties?.confirmation_time || obj.timeConfirm || obj.time;
+            if (confTime > limit) return false;
+          }
+        }
+        if (isSwing && layers.swings === false) return false;
+        if (isLiquidity && layers.liquidity === false) return false;
+        if (isStructure && layers.structure === false) return false;
+        if (isIntent && layers.intent === false) return false;
+        if (isDelivery && layers.delivery === false) return false;
+
         if (isSwing && swingsFlag === 'on') {
           return false;
         }
@@ -2423,6 +2468,8 @@ export default function DrawingCanvas({
         const targetLayer = renderer?.layer || 'ZonesLayer';
         return targetLayer === layerName;
       });
+
+      console.log(`[DrawingCanvas Debug] layer:${layerName} vis:${visibleObjects.length} filt:${filtered.length} liq_layer:${analysisLayersRef.current?.liquidity}`);
 
       const labelOccupied = new Set();
       let selectedDrawn = false;

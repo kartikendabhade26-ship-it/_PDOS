@@ -22,7 +22,8 @@ const CONCEPT_NAMES = {
 export default function CandidateExplorer({
   selectedAlgoCandidate,
   setSelectedAlgoCandidate,
-  onSaveValidation
+  onSaveValidation,
+  algoCandidates = []
 }) {
   const [notes, setNotes] = useState('');
 
@@ -200,6 +201,167 @@ export default function CandidateExplorer({
           </div>
         )}
       </div>
+
+      {/* Research Lab Details for Dealing Range */}
+      {cand.type === 'dealing_range' && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          background: 'rgba(0,0,0,0.3)',
+          padding: '14px',
+          borderRadius: '8px',
+          border: '1px solid rgba(255, 255, 255, 0.06)'
+        }}>
+          <span style={{ fontSize: '11px', color: '#ffb300', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            🔬 Dealing Range Lab Details
+          </span>
+          
+          {/* High Boundary */}
+          <div style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+              <span style={{ color: '#b2b5be' }}>High Boundary:</span>
+              <strong style={{ fontFamily: 'monospace' }}>{cand.properties?.high_swing_id || 'N/A'}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px' }}>
+              <span style={{ color: '#787b86' }}>State:</span>
+              <span style={{ color: cand.properties?.evidence?.high_state === 'ACTIVE' ? '#26a69a' : '#ef5350', fontWeight: 600 }}>
+                {cand.properties?.evidence?.high_state || 'ACTIVE'}
+              </span>
+            </div>
+            {cand.properties?.evidence?.high_swept && cand.properties.evidence.high_swept.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px', fontSize: '11px' }}>
+                <span style={{ color: '#787b86' }}>Swept Swings:</span>
+                <span style={{ fontFamily: 'monospace', color: '#b2b5be', paddingLeft: '8px' }}>
+                  {cand.properties.evidence.high_swept.join(', ')}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Low Boundary */}
+          <div style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+              <span style={{ color: '#b2b5be' }}>Low Boundary:</span>
+              <strong style={{ fontFamily: 'monospace' }}>{cand.properties?.low_swing_id || 'N/A'}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px' }}>
+              <span style={{ color: '#787b86' }}>State:</span>
+              <span style={{ color: cand.properties?.evidence?.low_state === 'ACTIVE' ? '#26a69a' : '#ef5350', fontWeight: 600 }}>
+                {cand.properties?.evidence?.low_state || 'ACTIVE'}
+              </span>
+            </div>
+            {cand.properties?.evidence?.low_swept && cand.properties.evidence.low_swept.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px', fontSize: '11px' }}>
+                <span style={{ color: '#787b86' }}>Swept Swings:</span>
+                <span style={{ fontFamily: 'monospace', color: '#b2b5be', paddingLeft: '8px' }}>
+                  {cand.properties.evidence.low_swept.join(', ')}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Hypotheses Engine Checklist */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
+              <span style={{ color: '#b2b5be' }}>Hypotheses Score:</span>
+              <strong style={{ color: '#ffb300' }}>{cand.properties?.evidence?.score || 0}%</strong>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {(cand.properties?.evidence?.hypotheses || []).map(hyp => (
+                <div key={hyp.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px' }}>
+                  <span style={{ color: hyp.passed ? '#26a69a' : '#ef5350', fontWeight: 'bold' }}>
+                    {hyp.passed ? '✓' : '✗'}
+                  </span>
+                  <span style={{ color: '#b2b5be' }}>{hyp.name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Generator */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px' }}>
+            <span style={{ color: '#787b86' }}>Generator:</span>
+            <span style={{ color: '#b2b5be', fontFamily: 'monospace' }}>{cand.properties?.pairing_strategy || 'InducementSweepStrategy V1'}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Research Lab Details for Swing Points */}
+      {(cand.type === 'swing_high' || cand.type === 'swing_low') && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          background: 'rgba(0,0,0,0.3)',
+          padding: '14px',
+          borderRadius: '8px',
+          border: '1px solid rgba(255, 255, 255, 0.06)'
+        }}>
+          <span style={{ fontSize: '11px', color: '#ffb300', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            🔬 Swing Structure Details
+          </span>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+            <span style={{ color: '#b2b5be' }}>Swing ID:</span>
+            <strong style={{ fontFamily: 'monospace' }}>{cand.id}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+            <span style={{ color: '#b2b5be' }}>Degree:</span>
+            <strong>{cand.concept_label || 'STH/STL'}</strong>
+          </div>
+
+          {/* Swept Swings list */}
+          {(() => {
+            const parentRanges = (algoCandidates || []).filter(c => 
+              c.type === 'dealing_range' && 
+              (c.properties?.high_swing_id === cand.id || c.properties?.low_swing_id === cand.id)
+            );
+            const sweptIds = parentRanges.length > 0 
+              ? (cand.type === 'swing_high' 
+                  ? parentRanges[0].properties?.evidence?.high_swept 
+                  : parentRanges[0].properties?.evidence?.low_swept) || []
+              : [];
+            
+            const actsAsHigh = parentRanges.some(r => r.properties?.high_swing_id === cand.id);
+            const actsAsLow = parentRanges.some(r => r.properties?.low_swing_id === cand.id);
+            const rangeIds = parentRanges.map(r => r.id);
+
+            return (
+              <>
+                {sweptIds.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+                    <span style={{ color: '#b2b5be', fontSize: '11px' }}>Swept Swings:</span>
+                    <span style={{ fontFamily: 'monospace', color: '#ffb300', fontSize: '11px', paddingLeft: '8px' }}>
+                      {sweptIds.join(', ')}
+                    </span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+                  <span style={{ color: '#b2b5be', fontSize: '11px' }}>Acts As:</span>
+                  <div style={{ display: 'flex', gap: '8px', fontSize: '11px', paddingLeft: '8px' }}>
+                    {actsAsHigh && <span style={{ color: '#26a69a', fontWeight: 'bold' }}>✓ DR High Boundary</span>}
+                    {actsAsLow && <span style={{ color: '#ef5350', fontWeight: 'bold' }}>✓ DR Low Boundary</span>}
+                    {!actsAsHigh && !actsAsLow && <span style={{ color: '#787b86' }}>None (Pure Pivot)</span>}
+                  </div>
+                </div>
+
+                {rangeIds.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+                    <span style={{ color: '#b2b5be', fontSize: '11px' }}>Used In Dealing Ranges:</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '8px', fontSize: '10px', fontFamily: 'monospace', color: '#b2b5be' }}>
+                      {rangeIds.map(rid => (
+                        <div key={rid}>{rid.slice(0, 30)}...</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Market Context Snapshot */}
       {cand.context && (

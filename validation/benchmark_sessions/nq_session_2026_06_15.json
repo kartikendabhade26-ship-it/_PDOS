@@ -11,7 +11,7 @@
       { "id": "liquidity_ssl_1736779620_tf1", "level_price": 21814.75, "direction": "ssl" }
     ],
     "dealing_ranges": [
-      { "direction": "premium", "priceHigh": 22866.75, "priceLow": 22860.625 }
+      { "direction": "premium", "priceHigh": 22866.75, "priceLow": 22859.375 }
     ]
   }
 }

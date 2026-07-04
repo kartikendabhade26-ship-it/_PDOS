@@ -28,6 +28,12 @@ class LiquidityInteractionEngine extends BaseEngine {
       const tolerance = (p.priceHigh - p.priceLow) / 2.0;
       let lastTouchIdx = -10;
 
+      // Print debug for the first 3 pools
+      const debugPool = pools.indexOf(p) < 3;
+      if (debugPool) {
+        console.log(`[InteractionEngine Debug] Pool: ${p.id}, directionType: ${p.directionType}, levelPrice: ${p.levelPrice}, lastSwingIdx: ${lastSwingIdx}, bars: ${bars.length}`);
+      }
+
       for (let j = lastSwingIdx + 1; j < bars.length; j++) {
         const bar = bars[j];
         let eventType = null;
@@ -88,6 +94,9 @@ class LiquidityInteractionEngine extends BaseEngine {
         }
 
         if (eventType) {
+          if (debugPool) {
+            console.log(`  -> Detected eventType: ${eventType} at barIndex: ${j}, state now: ${state}`);
+          }
           interactions.push({
             id: `interaction_${eventType}_${p.directionType}_${bar.time}`,
             type: 'liquidity_interaction',
@@ -108,6 +117,9 @@ class LiquidityInteractionEngine extends BaseEngine {
           });
 
           if (state === 'consumed') {
+            if (debugPool) {
+              console.log(`  -> Pool consumed and archived.`);
+            }
             // Emit final archive event
             interactions.push({
               id: `interaction_archive_${p.directionType}_${bar.time}`,

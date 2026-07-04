@@ -84,9 +84,8 @@ body {
   align-items: center;
   padding: 0 8px;
   gap: 6px;
-  z-index: 10;
-  overflow-x: auto;
-  overflow-y: hidden;
+  z-index: 1020;
+  overflow: visible;
   scrollbar-width: none;  /* Firefox */
   -ms-overflow-style: none;
 }

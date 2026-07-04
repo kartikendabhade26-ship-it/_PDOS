@@ -1,29 +1,661 @@
 /**
  * algo/engines/dealingRangeEngine.js
- * PDOS Dealing Range Engine v1 (Geometry Only)
- * Constructs deterministic dealing ranges strictly from completed price delivery legs.
+ * PDOS Dealing Range Engine — Swept Liquidity Strategy
+ *
+ * ICT Principle:
+ *   When SSL is swept (price wicked below a swing low, taking sell stops) →
+ *     that swept level becomes the FLOOR of the dealing range.
+ *   When BSL is swept (price wicked above a swing high, taking buy stops) →
+ *     that swept level becomes the CEILING of the dealing range.
+ *
+ *   The Dealing Range is the distance between the most recent swept SSL and
+ *   the most recent swept BSL. Price delivers between them (premium ↔ discount).
  */
 
 const BaseEngine = require('./BaseEngine');
 const SwingEngine = require('./swingEngine');
-const LiquidityEngine = require('./liquidityEngine');
-const LiquidityInteractionEngine = require('./liquidityInteractionEngine');
+const { makeEvent } = require('../eventSchema');
+
+// ─── Strategy 1: Swept Swing Pairing ─────────────────────────────────────────
+// Consumes LiquidityInteraction 'sweep' events.
+// BSL sweep  → uses the confirmed Swing High from the swept pool as range High
+// SSL sweep  → uses the confirmed Swing Low from the swept pool as range Low
+class SweptSwingPairStrategy {
+  name = 'swept_swing_v1';
+
+  pair(interactions, pools, swings, bars) {
+    const ranges = [];
+    let lastSweptHigh = null; // swing_high object
+    let lastSweptLow = null;  // swing_low object
+
+    const poolMap = new Map();
+    if (Array.isArray(pools)) {
+      for (const p of pools) {
+        poolMap.set(p.id, p);
+      }
+    }
+
+    for (const evt of interactions) {
+      const props = evt.properties || {};
+      const itype = props.interactionType;
+      if (itype !== 'sweep') continue;
+
+      const isBSL = evt.direction === 'bullish' || evt.direction === 'bsl' || props.directionType === 'bsl';
+      const isSSL = evt.direction === 'bearish' || evt.direction === 'ssl' || props.directionType === 'ssl';
+      
+      const poolId = props.poolId;
+      const pool = poolMap.get(poolId);
+      if (!pool || !pool.swings || pool.swings.length === 0) continue;
+
+      // The swept swing is the most recent swing in the pool
+      const sweptSwing = pool.swings[pool.swings.length - 1];
+
+      if (isSSL) {
+        lastSweptLow = sweptSwing;
+      } else if (isBSL) {
+        lastSweptHigh = sweptSwing;
+      }
+
+      if (lastSweptHigh && lastSweptLow) {
+        const priceHigh = lastSweptHigh.priceHigh ?? lastSweptHigh.price ?? lastSweptHigh.price_high;
+        const priceLow = lastSweptLow.priceLow ?? lastSweptLow.price ?? lastSweptLow.price_low;
+
+        if (priceHigh > priceLow) {
+          ranges.push({
+            highSwing: lastSweptHigh,
+            lowSwing: lastSweptLow,
+            startBarIdx: Math.max(evt.barIndex, lastSweptHigh.barIndex, lastSweptLow.barIndex),
+            startTime: Math.max(evt.time, lastSweptHigh.time, lastSweptLow.time),
+            lastSweptSide: isSSL ? 'ssl' : 'bsl'
+          });
+        }
+      }
+    }
+    return ranges;
+  }
+}
+
+// ─── Strategy 2: Swing Pair fallback (original, degree-filtered) ──────────────
+class SwingPairStrategyV1 {
+  name = 'swing_pair_v1';
+
+  pair(swings, bars) {
+    const ranges = [];
+    let lastHigh = null;
+    let lastLow = null;
+
+    for (let i = 0; i < swings.length; i++) {
+      const sw = swings[i];
+      // Only pair structural swings of degree >= 2
+      const degree = sw.degree ?? sw.properties?.degree ?? 1;
+      if (degree < 2) continue;
+
+      const isHigh = sw.type === 'swing_high' || sw.swingType === 'high' ||
+                     sw.concept_type?.toLowerCase().includes('high') ||
+                     sw.properties?.type === 'swing_high';
+      if (isHigh) {
+        lastHigh = sw;
+      } else {
+        lastLow = sw;
+      }
+
+      if (lastHigh && lastLow) {
+        ranges.push({
+          highSwing: lastHigh,
+          lowSwing: lastLow,
+          lastArrived: sw
+        });
+      }
+    }
+    return ranges;
+  }
+}
+
+class LiquidityStateMachineStrategy {
+  name = 'liquidity_state_machine_v1';
+
+  pair(swings, bars, symbol, timeframe) {
+    let swingHighs = swings?.swingHighs || [];
+    let swingLows = swings?.swingLows || [];
+
+    if (swingHighs.length === 0 || swingLows.length === 0) {
+      const swingEngine = new SwingEngine();
+      const resolved = swingEngine.findSwings(bars);
+      swingHighs = resolved.swingHighs || [];
+      swingLows = resolved.swingLows || [];
+    }
+
+    const swingsByConfirmBar = new Map();
+    const getConfirmIdx = (sw) => {
+      return sw.confirmationBar ?? sw.properties?.confirmationBar ?? (sw.barIndex + 2);
+    };
+
+    for (const sw of swingHighs) {
+      const conf = getConfirmIdx(sw);
+      if (!swingsByConfirmBar.has(conf)) swingsByConfirmBar.set(conf, []);
+      swingsByConfirmBar.get(conf).push({ ...sw, swingType: 'high' });
+    }
+    for (const sw of swingLows) {
+      const conf = getConfirmIdx(sw);
+      if (!swingsByConfirmBar.has(conf)) swingsByConfirmBar.set(conf, []);
+      swingsByConfirmBar.get(conf).push({ ...sw, swingType: 'low' });
+    }
+
+    const ranges = [];
+    let activeHigh = null;
+    let activeLow = null;
+    let highState = 'active'; // 'active' | 'swept'
+    let lowState = 'active';  // 'active' | 'swept'
+    let sweepHighBarIdx = -1;
+    let sweepLowBarIdx = -1;
+    let currentRange = null;
+    let rangeEstablished = false;
+
+    for (let j = 0; j < bars.length; j++) {
+      const bar = bars[j];
+
+      // 1. Check if the current active range is broken by a sweep of its boundaries
+      if (currentRange) {
+        const priceHigh = currentRange.priceHigh;
+        const priceLow = currentRange.priceLow;
+        if (bar.high > priceHigh || bar.low < priceLow) {
+          currentRange.timeEnd = bar.time;
+          currentRange.state = 'completed';
+          currentRange = null;
+          rangeEstablished = false;
+        }
+      }
+
+      // 2. Check if the active boundaries themselves are swept by price
+      if (highState === 'active' && activeHigh) {
+        const ph = activeHigh.priceHigh ?? activeHigh.price ?? activeHigh.price_high;
+        if (bar.high > ph) {
+          highState = 'swept';
+          sweepHighBarIdx = j;
+          rangeEstablished = false;
+          if (currentRange) {
+            currentRange.timeEnd = bar.time;
+            currentRange.state = 'completed';
+            currentRange = null;
+          }
+        }
+      }
+
+      if (lowState === 'active' && activeLow) {
+        const pl = activeLow.priceLow ?? activeLow.price ?? activeLow.price_low;
+        if (bar.low < pl) {
+          lowState = 'swept';
+          sweepLowBarIdx = j;
+          rangeEstablished = false;
+          if (currentRange) {
+            currentRange.timeEnd = bar.time;
+            currentRange.state = 'completed';
+            currentRange = null;
+          }
+        }
+      }
+
+      // 3. Process new swings confirmed at bar j
+      const newSwings = swingsByConfirmBar.get(j) || [];
+      for (const sw of newSwings) {
+        if (sw.swingType === 'high') {
+          if (!activeHigh) {
+            activeHigh = sw;
+            highState = 'active';
+            if (activeLow && !currentRange) {
+              currentRange = createRange(activeHigh, activeLow, j, bar.time, 'high');
+              ranges.push(currentRange);
+              rangeEstablished = true;
+            }
+          } else if (highState === 'swept' && sw.barIndex > sweepHighBarIdx) {
+            activeHigh = sw;
+            highState = 'active';
+            if (activeLow) {
+              currentRange = createRange(activeHigh, activeLow, j, bar.time, 'high');
+              ranges.push(currentRange);
+              rangeEstablished = true;
+            }
+          } else if (highState === 'active' && !rangeEstablished) {
+            activeHigh = sw;
+            if (activeLow) {
+              currentRange = createRange(activeHigh, activeLow, j, bar.time, 'high');
+              ranges.push(currentRange);
+              rangeEstablished = true;
+            }
+          }
+        } else {
+          // low
+          if (!activeLow) {
+            activeLow = sw;
+            lowState = 'active';
+            if (activeHigh && !currentRange) {
+              currentRange = createRange(activeHigh, activeLow, j, bar.time, 'low');
+              ranges.push(currentRange);
+              rangeEstablished = true;
+            }
+          } else if (lowState === 'swept' && sw.barIndex > sweepLowBarIdx) {
+            activeLow = sw;
+            lowState = 'active';
+            if (activeHigh) {
+              currentRange = createRange(activeHigh, activeLow, j, bar.time, 'low');
+              ranges.push(currentRange);
+              rangeEstablished = true;
+            }
+          } else if (lowState === 'active' && !rangeEstablished) {
+            activeLow = sw;
+            if (activeHigh) {
+              currentRange = createRange(activeHigh, activeLow, j, bar.time, 'low');
+              ranges.push(currentRange);
+              rangeEstablished = true;
+            }
+          }
+        }
+      }
+    }
+
+    function createRange(highSw, lowSw, confirmBarIdx, confirmTime, lastSweptSide) {
+      const priceHigh = highSw.priceHigh ?? highSw.price ?? highSw.price_high;
+      const priceLow = lowSw.priceLow ?? lowSw.price ?? lowSw.price_low;
+      const timeStart = Math.min(highSw.time, lowSw.time);
+      const startBarIdx = Math.min(highSw.barIndex, lowSw.barIndex);
+
+      return {
+        highSwing: highSw,
+        lowSwing: lowSw,
+        priceHigh,
+        priceLow,
+        startBarIdx,
+        startTime: timeStart,
+        confirmBarIdx,
+        confirmTime,
+        lastSweptSide,
+        timeEnd: null,
+        state: 'active'
+      };
+    }
+
+    return ranges;
+  }
+}
+
+class FirstConfirmedSwingStrategy {
+  build(swings, bars) {
+    const relationships = [];
+    const highs = swings.filter(s => s.type === 'swing_high');
+    const lows = swings.filter(s => s.type === 'swing_low');
+
+    // 1. Process Highs
+    for (let i = 0; i < highs.length; i++) {
+      const s1 = highs[i];
+      const p1 = s1.priceHigh;
+
+      let targetSwing = null;
+      for (let j = i + 1; j < highs.length; j++) {
+        const s2 = highs[j];
+        if (s2.priceHigh > p1) {
+          targetSwing = s2;
+          break;
+        }
+      }
+
+      if (targetSwing) {
+        let breachBarIdx = null;
+        for (let b = s1.barIndex + 1; b <= targetSwing.barIndex; b++) {
+          if (bars[b] && bars[b].high > p1) {
+            breachBarIdx = b;
+            break;
+          }
+        }
+        if (breachBarIdx === null) breachBarIdx = targetSwing.barIndex;
+
+        let hasWick = false;
+        let hasBody = false;
+        const scanEnd = Math.min(bars.length - 1, targetSwing.barIndex + 2);
+        for (let k = breachBarIdx; k <= scanEnd; k++) {
+          if (bars[k]) {
+            if (bars[k].high > p1) {
+              if (bars[k].close > p1) {
+                hasBody = true;
+              } else {
+                hasWick = true;
+              }
+            }
+          }
+        }
+
+        const penetration = (hasBody && hasWick) ? 'both' : (hasBody ? 'body' : 'wick');
+        const distanceTicks = Math.round((targetSwing.priceHigh - p1) / 0.25);
+        const confirmationDelay = (targetSwing.properties?.confirmationBar ?? (targetSwing.barIndex + 2)) - breachBarIdx;
+
+        relationships.push({
+          source_swing_id: s1.id,
+          target_swing_id: targetSwing.id,
+          taken_time: bars[breachBarIdx].time,
+          taken_price: bars[breachBarIdx].high,
+          properties: {
+            penetration,
+            distance_ticks: distanceTicks,
+            confirmation_delay_bars: confirmationDelay
+          }
+        });
+      }
+    }
+
+    // 2. Process Lows
+    for (let i = 0; i < lows.length; i++) {
+      const s1 = lows[i];
+      const p1 = s1.priceLow;
+
+      let targetSwing = null;
+      for (let j = i + 1; j < lows.length; j++) {
+        const s2 = lows[j];
+        if (s2.priceLow < p1) {
+          targetSwing = s2;
+          break;
+        }
+      }
+
+      if (targetSwing) {
+        let breachBarIdx = null;
+        for (let b = s1.barIndex + 1; b <= targetSwing.barIndex; b++) {
+          if (bars[b] && bars[b].low < p1) {
+            breachBarIdx = b;
+            break;
+          }
+        }
+        if (breachBarIdx === null) breachBarIdx = targetSwing.barIndex;
+
+        let hasWick = false;
+        let hasBody = false;
+        const scanEnd = Math.min(bars.length - 1, targetSwing.barIndex + 2);
+        for (let k = breachBarIdx; k <= scanEnd; k++) {
+          if (bars[k]) {
+            if (bars[k].low < p1) {
+              if (bars[k].close < p1) {
+                hasBody = true;
+              } else {
+                hasWick = true;
+              }
+            }
+          }
+        }
+
+        const penetration = (hasBody && hasWick) ? 'both' : (hasBody ? 'body' : 'wick');
+        const distanceTicks = Math.round((p1 - targetSwing.priceLow) / 0.25);
+        const confirmationDelay = (targetSwing.properties?.confirmationBar ?? (targetSwing.barIndex + 2)) - breachBarIdx;
+
+        relationships.push({
+          source_swing_id: s1.id,
+          target_swing_id: targetSwing.id,
+          taken_time: bars[breachBarIdx].time,
+          taken_price: bars[breachBarIdx].low,
+          properties: {
+            penetration,
+            distance_ticks: distanceTicks,
+            confirmation_delay_bars: confirmationDelay
+          }
+        });
+      }
+    }
+
+    return relationships;
+  }
+}
+
+class InducementSweepPairStrategy {
+  name = 'inducement_sweep_v1';
+
+  pair(swings, bars, symbol, timeframe, options = {}) {
+    const groupedSwings = [];
+    const seenTimes = new Set();
+    const sortedSwings = [...swings].sort((a, b) => a.barIndex - b.barIndex);
+    
+    sortedSwings.forEach(s => {
+      if (!seenTimes.has(s.time)) {
+        seenTimes.add(s.time);
+        const matches = sortedSwings.filter(x => x.time === s.time);
+        const concepts = matches.map(x => x.concept_label || x.concept);
+        const hasHigh = matches.some(x => x.type === 'swing_high' || x.concept_type?.toLowerCase().includes('high'));
+        
+        groupedSwings.push({
+          id: matches[0].id || matches[0].event_id,
+          type: hasHigh ? 'swing_high' : 'swing_low',
+          concepts,
+          time: s.time,
+          price: matches[0].price || (hasHigh ? matches[0].priceHigh : matches[0].priceLow),
+          priceHigh: matches[0].priceHigh,
+          priceLow: matches[0].priceLow,
+          barIndex: s.barIndex,
+          properties: matches[0].properties || {}
+        });
+      }
+    });
+
+    const relStrategy = new FirstConfirmedSwingStrategy();
+    const relationships = relStrategy.build(groupedSwings, bars);
+
+    const boundaries = [];
+    const targetById = new Map();
+    groupedSwings.forEach(s => targetById.set(s.id, s));
+
+    const relsByTarget = new Map();
+    relationships.forEach(rel => {
+      if (!relsByTarget.has(rel.target_swing_id)) {
+        relsByTarget.set(rel.target_swing_id, []);
+      }
+      relsByTarget.get(rel.target_swing_id).push(rel);
+    });
+
+    relsByTarget.forEach((rels, targetId) => {
+      const targetSwing = targetById.get(targetId);
+      if (targetSwing) {
+        boundaries.push({
+          swing: targetSwing,
+          relationships: rels
+        });
+      }
+    });
+
+    // 1. Assign timeEnd based on sweep relationships (liquidity taken time)
+    boundaries.forEach(b => {
+      b.swing.timeEnd = relationships.find(r => r.source_swing_id === b.swing.id)?.taken_time || null;
+      b.state = 'ACTIVE';
+    });
+
+    // 2. Lifecycle State Tracking (ACTIVE -> REPLACED)
+    const highs = boundaries.filter(b => b.swing.type === 'swing_high');
+    const lows = boundaries.filter(b => b.swing.type === 'swing_low');
+
+    highs.forEach((h1, i) => {
+      const p1 = h1.swing.priceHigh ?? h1.swing.price;
+      for (let j = i + 1; j < highs.length; j++) {
+        const h2 = highs[j];
+        const p2 = h2.swing.priceHigh ?? h2.swing.price;
+        if (p2 >= p1) {
+          h1.state = 'REPLACED';
+          break;
+        }
+      }
+    });
+
+    lows.forEach((l1, i) => {
+      const p1 = l1.swing.priceLow ?? l1.swing.price;
+      for (let j = i + 1; j < lows.length; j++) {
+        const l2 = lows[j];
+        const p2 = l2.swing.priceLow ?? l2.swing.price;
+        if (p2 <= p1) {
+          l1.state = 'REPLACED';
+          break;
+        }
+      }
+    });
+
+    boundaries.sort((a, b) => a.swing.time - b.swing.time);
+
+    const researchMode = process.env.PDOS_RESEARCH_MODE === 'true' || options.researchMode === true;
+    if (researchMode) {
+      this.logResearchGraph(boundaries, groupedSwings, options);
+    }
+
+    // 3. Evaluate pairs using Hypothesis Rules Engine
+    const ranges = [];
+    const activeHighs = boundaries.filter(b => b.swing.type === 'swing_high');
+    const activeLows = boundaries.filter(b => b.swing.type === 'swing_low');
+
+    const hypotheses = [
+      {
+        name: 'both_active',
+        evaluate: (h, l) => {
+          const hEnd = h.swing.timeEnd || Infinity;
+          const lEnd = l.swing.timeEnd || Infinity;
+          return hEnd > l.swing.time && lEnd > h.swing.time;
+        }
+      },
+      {
+        name: 'time_overlap',
+        evaluate: (h, l) => {
+          const hEnd = h.swing.timeEnd || Infinity;
+          const lEnd = l.swing.timeEnd || Infinity;
+          return Math.max(h.swing.time, l.swing.time) <= Math.min(hEnd, lEnd);
+        }
+      },
+      {
+        name: 'rule_03',
+        evaluate: (h, l) => true // Placeholder structural rule
+      }
+    ];
+
+    activeHighs.forEach(h => {
+      activeLows.forEach(l => {
+        const results = hypotheses.map(hyp => ({ name: hyp.name, passed: hyp.evaluate(h, l) }));
+        const score = Math.round((results.filter(r => r.passed).length / hypotheses.length) * 100);
+        const engineAccepted = score === 100;
+
+        if (engineAccepted || researchMode) {
+          const rangeEnd = Math.min(h.swing.timeEnd || Infinity, l.swing.timeEnd || Infinity);
+          ranges.push({
+            highSwing: h.swing,
+            lowSwing: l.swing,
+            time: Math.min(h.swing.time, l.swing.time),
+            timeStart: Math.min(h.swing.time, l.swing.time),
+            timeEnd: rangeEnd !== Infinity ? rangeEnd : null,
+            startTime: Math.min(h.swing.time, l.swing.time),
+            confirmTime: Math.max(
+              h.swing.properties.confirmationBar ? bars[h.swing.properties.confirmationBar]?.time : h.swing.time,
+              l.swing.properties.confirmationBar ? bars[l.swing.properties.confirmationBar]?.time : l.swing.time
+            ) || Math.max(h.swing.time, l.swing.time),
+            lastSweptSide: h.swing.time > l.swing.time ? 'bsl' : 'ssl',
+            state: engineAccepted ? 'active' : 'candidate_rejected',
+            evidence: {
+              high_swept: h.relationships.map(r => r.source_swing_id),
+              low_swept: l.relationships.map(r => r.source_swing_id),
+              high_state: h.state,
+              low_state: l.state,
+              time_overlap: results.find(r => r.name === 'time_overlap').passed,
+              score,
+              hypotheses: results
+            }
+          });
+        }
+      });
+    });
+
+    return ranges;
+  }
+
+  logResearchGraph(boundaries, groupedSwings, options = {}) {
+    const startTs = options.startTs || 0;
+    const endTs = options.endTs || Infinity;
+
+    const targetSwings = groupedSwings.filter(s => s.time >= startTs && s.time <= endTs);
+    const swingToNum = new Map();
+    targetSwings.forEach((s, idx) => swingToNum.set(s.id, idx + 1));
+
+    console.log('\nBoundary Graph\n');
+    boundaries.forEach(b => {
+      if (b.swing.time >= startTs && b.swing.time <= endTs) {
+        const swingNum = swingToNum.get(b.swing.id);
+        const typeLabel = b.swing.type === 'swing_high' ? 'High' : 'Low';
+        const sweptNums = b.relationships
+          .map(r => swingToNum.get(r.source_swing_id))
+          .filter(n => n !== undefined);
+
+        if (sweptNums.length > 0) {
+          console.log(`${typeLabel}`);
+          console.log(`${swingNum}`);
+          console.log('↓');
+          console.log('Swept');
+          console.log(sweptNums.join(', '));
+          console.log('\n----------------\n');
+        }
+      }
+    });
+
+    console.log('\nBoundary Pair Evaluation Lab\n');
+    const highs = boundaries.filter(b => b.swing.type === 'swing_high');
+    const lows = boundaries.filter(b => b.swing.type === 'swing_low');
+
+    const manualPairs = ['41-42', '41-38', '39-38', '33-38', '26-27', '17-38', '5-38', '5-6'];
+
+    highs.forEach(h => {
+      lows.forEach(l => {
+        if (
+          (h.swing.time >= startTs && h.swing.time <= endTs) ||
+          (l.swing.time >= startTs && l.swing.time <= endTs)
+        ) {
+          const hNum = swingToNum.get(h.swing.id);
+          const lNum = swingToNum.get(l.swing.id);
+          if (!hNum || !lNum) return;
+
+          const hEnd = h.swing.timeEnd || Infinity;
+          const lEnd = l.swing.timeEnd || Infinity;
+          const timeOverlap = Math.max(h.swing.time, l.swing.time) <= Math.min(hEnd, lEnd);
+
+          const results = [
+            { 
+              name: 'both_active', 
+              passed: (h.swing.timeEnd || Infinity) > l.swing.time && (l.swing.timeEnd || Infinity) > h.swing.time 
+            },
+            { name: 'time_overlap', passed: timeOverlap },
+            { name: 'rule_03', passed: true }
+          ];
+
+          const score = Math.round((results.filter(r => r.passed).length / results.length) * 100);
+          const engineAccepted = score === 100;
+
+          const key = `${hNum}-${lNum}`;
+          const manualAccepted = manualPairs.includes(key);
+          const isMatch = engineAccepted === manualAccepted;
+
+          console.log(`Pair: High ${hNum} - Low ${lNum}`);
+          console.log(`Score: ${score}%`);
+          console.log('Hypotheses:');
+          results.forEach(r => {
+            console.log(`  [${r.passed ? '✓' : '✗'}] ${r.name}`);
+          });
+          console.log(`Manual Label: ${manualAccepted ? 'Accepted' : 'Rejected'}`);
+          console.log(`Engine Decision: ${engineAccepted ? 'Accepted' : 'Rejected'}`);
+          console.log(`Result: ${isMatch ? 'MATCH ✓' : 'MISMATCH ✗'}`);
+          console.log('\n----------------\n');
+        }
+      });
+    });
+  }
+}
 
 class DealingRangeEngine extends BaseEngine {
+  constructor() {
+    super();
+    this.strategies = {
+      swept_swing_v1:     new SweptSwingPairStrategy(),
+      swing_pair_v1:      new SwingPairStrategyV1(),
+      liquidity_state_machine_v1: new LiquidityStateMachineStrategy(),
+      inducement_sweep_v1: new InducementSweepPairStrategy()
+    };
+  }
+
   detect(bars, options = {}, context = {}) {
     const { preComputedSwings, preComputedLiquidity, preComputedInteractions, symbol } = context;
-
-    // Resolve swings
-    const swingEngine = new SwingEngine();
-    const swings = preComputedSwings || swingEngine.findSwings(bars);
-
-    // Resolve liquidity pools
-    const liquidityEngine = new LiquidityEngine();
-    const liquidityPools = preComputedLiquidity || liquidityEngine.detect(bars, { concept: 'liquidity' }, { preComputedSwings: swings, symbol });
-
-    // Resolve interactions
-    const interactionEngine = new LiquidityInteractionEngine();
-    const interactionEvents = preComputedInteractions || interactionEngine.detect(bars, {}, { preComputedSwings: swings, preComputedLiquidity: liquidityPools, symbol });
 
     if (bars.length === 0) return [];
 
@@ -33,129 +665,311 @@ class DealingRangeEngine extends BaseEngine {
       if (diffMin > 0) timeframe = diffMin;
     }
 
-    const ranges = [];
+    const rangeEvents = [];
+    const strategyName = options.pairingStrategy || 'inducement_sweep_v1';
 
-    // Filter confirmed sweeps only and sort chronologically
-    const sweeps = interactionEvents
-      .filter(e => e.properties?.interactionType === 'sweep')
-      .sort((a, b) => a.barIndex - b.barIndex);
+    if (strategyName === 'inducement_sweep_v1') {
+      const strategy = this.strategies['inducement_sweep_v1'];
+      const swingsList = preComputedSwings?.allSwings || preComputedSwings || [];
+      const pairs = strategy.pair(swingsList, bars, symbol, timeframe, options);
 
-    for (let i = 0; i < sweeps.length; i++) {
-      const originSweep = sweeps[i];
-      const originDir = originSweep.direction; // 'bsl' or 'ssl'
-      const originPrice = originSweep.properties?.levelPrice || originSweep.priceHigh;
+      for (let i = 0; i < pairs.length; i++) {
+        const pair = pairs[i];
+        const { highSwing, lowSwing, startTime, confirmTime, lastSweptSide, state, timeEnd } = pair;
 
-      if (originDir === 'ssl') {
-        // Bullish Dealing Range: SSL swept first, then look forward for the first subsequent BSL sweep
-        const destSweep = sweeps.find(e => e.barIndex > originSweep.barIndex && e.direction === 'bsl');
-        if (destSweep) {
-          const destPrice = destSweep.properties?.levelPrice || destSweep.priceHigh;
-          const rangeHigh = destPrice;
-          const rangeLow = originPrice;
-          const timeStart = originSweep.time;
-          const timeEnd = destSweep.time;
-          
-          if (rangeHigh > rangeLow) {
-            const level_100 = rangeHigh;
-            const level_75 = rangeLow + 0.75 * (rangeHigh - rangeLow);
-            const level_50 = rangeLow + 0.50 * (rangeHigh - rangeLow);
-            const level_25 = rangeLow + 0.25 * (rangeHigh - rangeLow);
-            const level_0 = rangeLow;
+        const priceHigh = highSwing.priceHigh ?? highSwing.price ?? highSwing.price_high;
+        const priceLow = lowSwing.priceLow ?? lowSwing.price ?? lowSwing.price_low;
 
-            ranges.push({
-              id: `dealing_range_bullish_${timeStart}_tf${timeframe}`,
-              type: 'dealing_range',
-              direction: 'bullish',
-              time: timeStart,
-              timeStart: timeStart,
-              timeEnd: timeEnd,
-              priceHigh: rangeHigh,
-              priceLow: rangeLow,
-              barIndex: originSweep.barIndex,
-              symbol: symbol || '',
-              timeframe,
-              state: 'completed',
-              createdBy: originSweep.id,
-              targets: destSweep.properties?.poolId,
-              consumes: originSweep.properties?.poolId,
-              properties: {
-                range_id: `dealing_range_bullish_${timeStart}_tf${timeframe}`,
-                symbol: symbol || '',
-                timeframe,
-                direction: 'bullish',
-                start_time: timeStart,
-                end_time: timeEnd,
-                origin_liquidity: originSweep.properties?.poolId,
-                destination_liquidity: destSweep.properties?.poolId,
-                high: rangeHigh,
-                low: rangeLow,
-                level_100,
-                level_75,
-                level_50,
-                level_25,
-                level_0
-              }
-            });
+        if (priceHigh <= priceLow) continue;
+
+        const range_size  = priceHigh - priceLow;
+        const range_ticks = range_size / 0.25;
+        const midpoint    = (priceHigh + priceLow) / 2;
+
+        const rangeId = `dealing_range_inducement_${startTime}_tf${timeframe}`;
+
+        rangeEvents.push({
+          id: rangeId,
+          type: 'dealing_range',
+          direction: lastSweptSide === 'ssl' ? 'bearish' : 'bullish',
+          time:      startTime,
+          timeStart: startTime,
+          timeEnd:   timeEnd,
+          priceHigh: priceHigh,
+          priceLow:  priceLow,
+          barIndex:  Math.min(highSwing.barIndex, lowSwing.barIndex),
+          symbol: symbol || '',
+          timeframe,
+          state,
+          properties: {
+            dealing_range_id: rangeId,
+            pairing_strategy: strategy.name,
+            high_swing_id: highSwing.id,
+            low_swing_id:  lowSwing.id,
+            swept_bsl_price: priceHigh,
+            swept_ssl_price: priceLow,
+            swept_bsl_time:  highSwing.time,
+            swept_ssl_time:  lowSwing.time,
+            last_swept_side: lastSweptSide,
+            confirmation_time: confirmTime,
+            high:  priceHigh,
+            low:   priceLow,
+            range_size,
+            range_ticks,
+            midpoint,
+            level_100: priceHigh,
+            level_75:  priceLow + 0.75 * range_size,
+            level_50:  midpoint,
+            level_25:  priceLow + 0.25 * range_size,
+            level_0:   priceLow,
+            premium: { high: priceHigh, low: midpoint },
+            discount: { high: midpoint, low: priceLow },
+            state
           }
-        }
-      } else if (originDir === 'bsl') {
-        // Bearish Dealing Range: BSL swept first, then look forward for the first subsequent SSL sweep
-        const destSweep = sweeps.find(e => e.barIndex > originSweep.barIndex && e.direction === 'ssl');
-        if (destSweep) {
-          const destPrice = destSweep.properties?.levelPrice || destSweep.priceLow;
-          const rangeHigh = originPrice;
-          const rangeLow = destPrice;
-          const timeStart = originSweep.time;
-          const timeEnd = destSweep.time;
-
-          if (rangeHigh > rangeLow) {
-            const level_100 = rangeHigh;
-            const level_75 = rangeLow + 0.75 * (rangeHigh - rangeLow);
-            const level_50 = rangeLow + 0.50 * (rangeHigh - rangeLow);
-            const level_25 = rangeLow + 0.25 * (rangeHigh - rangeLow);
-            const level_0 = rangeLow;
-
-            ranges.push({
-              id: `dealing_range_bearish_${timeStart}_tf${timeframe}`,
-              type: 'dealing_range',
-              direction: 'bearish',
-              time: timeStart,
-              timeStart: timeStart,
-              timeEnd: timeEnd,
-              priceHigh: rangeHigh,
-              priceLow: rangeLow,
-              barIndex: originSweep.barIndex,
-              symbol: symbol || '',
-              timeframe,
-              state: 'completed',
-              createdBy: originSweep.id,
-              targets: destSweep.properties?.poolId,
-              consumes: originSweep.properties?.poolId,
-              properties: {
-                range_id: `dealing_range_bearish_${timeStart}_tf${timeframe}`,
-                symbol: symbol || '',
-                timeframe,
-                direction: 'bearish',
-                start_time: timeStart,
-                end_time: timeEnd,
-                origin_liquidity: originSweep.properties?.poolId,
-                destination_liquidity: destSweep.properties?.poolId,
-                high: rangeHigh,
-                low: rangeLow,
-                level_100,
-                level_75,
-                level_50,
-                level_25,
-                level_0
-              }
-            });
-          }
-        }
+        });
       }
+      return rangeEvents;
     }
 
-    return ranges;
+    if (strategyName === 'liquidity_state_machine_v1') {
+      const strategy = this.strategies['liquidity_state_machine_v1'];
+      const pairs = strategy.pair(preComputedSwings, bars, symbol, timeframe);
+
+      for (let i = 0; i < pairs.length; i++) {
+        const pair = pairs[i];
+        const { highSwing, lowSwing, startBarIdx, startTime, lastSweptSide, timeEnd, state, confirmBarIdx, confirmTime } = pair;
+
+        const priceHigh = highSwing.priceHigh ?? highSwing.price ?? highSwing.price_high;
+        const priceLow = lowSwing.priceLow ?? lowSwing.price ?? lowSwing.price_low;
+
+        if (priceHigh <= priceLow) continue;
+
+        const range_size  = priceHigh - priceLow;
+        const range_ticks = range_size / 0.25;
+        const midpoint    = (priceHigh + priceLow) / 2;
+
+        const rangeId = `dealing_range_sweep_${startTime}_tf${timeframe}`;
+
+        rangeEvents.push({
+          id: rangeId,
+          type: 'dealing_range',
+          direction: lastSweptSide === 'ssl' ? 'bearish' : 'bullish',
+          time:      startTime,
+          timeStart: startTime,
+          timeEnd,
+          priceHigh: priceHigh,
+          priceLow:  priceLow,
+          barIndex:  startBarIdx,
+          symbol: symbol || '',
+          timeframe,
+          state,
+          properties: {
+            dealing_range_id: rangeId,
+            pairing_strategy: strategy.name,
+            high_swing_id: highSwing.id ?? `swing_high_${highSwing.time}`,
+            low_swing_id:  lowSwing.id  ?? `swing_low_${lowSwing.time}`,
+            swept_bsl_price: priceHigh,
+            swept_ssl_price: priceLow,
+            swept_bsl_time:  highSwing.time,
+            swept_ssl_time:  lowSwing.time,
+            last_swept_side: lastSweptSide,
+            confirmation_time: confirmTime,
+            high:  priceHigh,
+            low:   priceLow,
+            range_size,
+            range_ticks,
+            midpoint,
+            level_100: priceHigh,
+            level_75:  priceLow + 0.75 * range_size,
+            level_50:  midpoint,
+            level_25:  priceLow + 0.25 * range_size,
+            level_0:   priceLow,
+            premium: { high: priceHigh, low: midpoint },
+            discount: { high: midpoint, low: priceLow },
+            state
+          }
+        });
+      }
+      return rangeEvents;
+    }
+
+    // ── Path A: Swept Liquidity (preferred, ICT-correct) ──────────────────────
+    const interactions = Array.isArray(preComputedInteractions) ? preComputedInteractions : [];
+    if (interactions.length > 0) {
+      const strategy = this.strategies['swept_swing_v1'];
+      const pairs = strategy.pair(interactions, preComputedLiquidity, preComputedSwings, bars);
+
+      for (let i = 0; i < pairs.length; i++) {
+        const pair = pairs[i];
+        const { highSwing, lowSwing, startBarIdx, startTime, lastSweptSide } = pair;
+
+        const priceHigh = highSwing.priceHigh ?? highSwing.price ?? highSwing.price_high;
+        const priceLow = lowSwing.priceLow ?? lowSwing.price ?? lowSwing.price_low;
+
+        if (priceHigh <= priceLow) continue;
+
+        const confirmBarIdx = startBarIdx;
+        const timeConfirm = startTime;
+
+        // Find next candle that closes outside the range boundaries
+        let breakBarIdx = null;
+        for (let j = confirmBarIdx + 1; j < bars.length; j++) {
+          if (bars[j].close > priceHigh || bars[j].close < priceLow) {
+            breakBarIdx = j;
+            break;
+          }
+        }
+
+        const timeEnd = breakBarIdx !== null ? bars[breakBarIdx].time : null;
+        const state   = timeEnd !== null ? 'completed' : 'active';
+        const direction = lastSweptSide === 'ssl' ? 'bearish' : 'bullish';
+
+        const range_size  = priceHigh - priceLow;
+        const range_ticks = range_size / 0.25;
+        const midpoint    = (priceHigh + priceLow) / 2;
+
+        const rangeId = `dealing_range_sweep_${startTime}_tf${timeframe}`;
+
+        rangeEvents.push({
+          id: rangeId,
+          type: 'dealing_range',
+          direction,
+          time:      startTime,
+          timeStart: startTime,
+          timeEnd,
+          priceHigh: priceHigh,
+          priceLow:  priceLow,
+          barIndex:  startBarIdx,
+          symbol: symbol || '',
+          timeframe,
+          state,
+          properties: {
+            dealing_range_id: rangeId,
+            pairing_strategy: strategy.name,
+            high_swing_id: highSwing.id ?? `swing_high_${highSwing.time}`,
+            low_swing_id:  lowSwing.id  ?? `swing_low_${lowSwing.time}`,
+            swept_bsl_price: priceHigh,
+            swept_ssl_price: priceLow,
+            swept_bsl_time:  highSwing.time,
+            swept_ssl_time:  lowSwing.time,
+            last_swept_side: lastSweptSide,
+            confirmation_time: timeConfirm,
+            high:  priceHigh,
+            low:   priceLow,
+            range_size,
+            range_ticks,
+            midpoint,
+            level_100: priceHigh,
+            level_75:  priceLow + 0.75 * range_size,
+            level_50:  midpoint,
+            level_25:  priceLow + 0.25 * range_size,
+            level_0:   priceLow,
+            premium: { high: priceHigh, low: midpoint },
+            discount: { high: midpoint, low: priceLow },
+            state
+          }
+        });
+      }
+      return rangeEvents;
+    }
+
+    // ── Path B: Swing Pair fallback (if no interaction data available) ─────────
+    let swingHighs = preComputedSwings?.swingHighs;
+    let swingLows  = preComputedSwings?.swingLows;
+
+    if (!swingHighs || !swingLows) {
+      const swingEngine = new SwingEngine();
+      const resolved = swingEngine.findSwings(bars);
+      swingHighs = resolved.swingHighs;
+      swingLows  = resolved.swingLows;
+    }
+
+    const mergedSwings = [
+      ...swingHighs.map(h => ({ ...h, swingType: 'high' })),
+      ...swingLows.map(l  => ({ ...l, swingType: 'low'  }))
+    ].sort((a, b) => a.barIndex - b.barIndex);
+
+    const strategy = this.strategies['swing_pair_v1'];
+    const pairs = strategy.pair(mergedSwings, bars);
+
+    for (let i = 0; i < pairs.length; i++) {
+      const { highSwing, lowSwing, lastArrived } = pairs[i];
+
+      const priceHigh = highSwing.priceHigh ?? highSwing.price ?? highSwing.price_high;
+      const priceLow  = lowSwing.priceLow  ?? lowSwing.price  ?? lowSwing.price_low;
+
+      if (priceHigh <= priceLow) continue;
+
+      const timeStart    = Math.min(highSwing.time, lowSwing.time);
+      const startBarIdx  = Math.min(highSwing.barIndex, lowSwing.barIndex);
+      const creationBarIdx = Math.max(highSwing.barIndex, lowSwing.barIndex);
+
+      const highConf = highSwing.properties?.confirmationBar ?? highSwing.confirmationBar ?? (highSwing.barIndex + 2);
+      const lowConf  = lowSwing.properties?.confirmationBar  ?? lowSwing.confirmationBar  ?? (lowSwing.barIndex  + 2);
+      const confirmBarIdx = Math.max(highConf, lowConf);
+      const timeConfirm = bars[confirmBarIdx]?.time ?? Math.max(highSwing.time, lowSwing.time);
+
+      let breakBarIdx = null;
+      for (let j = confirmBarIdx + 1; j < bars.length; j++) {
+        if (bars[j].close > priceHigh || bars[j].close < priceLow) {
+          breakBarIdx = j;
+          break;
+        }
+      }
+
+      const timeEnd  = breakBarIdx !== null ? bars[breakBarIdx].time : null;
+      const state    = timeEnd !== null ? 'completed' : 'active';
+      const direction = lastArrived.swingType === 'high' ? 'bullish' : 'bearish';
+
+      const range_size  = priceHigh - priceLow;
+      const range_ticks = range_size / 0.25;
+      const midpoint    = (priceHigh + priceLow) / 2;
+
+      const rangeId = `dealing_range_${direction}_${timeStart}_tf${timeframe}`;
+
+      rangeEvents.push({
+        id: rangeId,
+        type: 'dealing_range',
+        direction,
+        time:      timeStart,
+        timeStart,
+        timeEnd,
+        priceHigh,
+        priceLow,
+        barIndex:  startBarIdx,
+        symbol:    symbol || '',
+        timeframe,
+        state,
+        properties: {
+          dealing_range_id: rangeId,
+          high_swing_id: highSwing.id ?? `swing_high_${highSwing.time}`,
+          low_swing_id:  lowSwing.id  ?? `swing_low_${lowSwing.time}`,
+          creation_bar:     creationBarIdx,
+          confirmation_bar: confirmBarIdx,
+          confirmation_time: timeConfirm,
+          completion_bar:    breakBarIdx,
+          high: priceHigh,
+          low:  priceLow,
+          range_size,
+          range_ticks,
+          midpoint,
+          level_100: priceHigh,
+          level_75:  priceLow + 0.75 * range_size,
+          level_50:  midpoint,
+          level_25:  priceLow + 0.25 * range_size,
+          level_0:   priceLow,
+          premium: { high: priceHigh, low: midpoint },
+          discount: { high: midpoint, low: priceLow },
+          state,
+          pairing_strategy: strategy.name
+        }
+      });
+    }
+
+    return rangeEvents;
   }
+
+
 
   updateState(activeEvents, bars, context = {}) {
     return [];
@@ -163,8 +977,35 @@ class DealingRangeEngine extends BaseEngine {
 
   validate(event) {
     if (!event.time || event.priceHigh === undefined || event.priceLow === undefined) {
-      return { isValid: false, reason: "Missing coordinates" };
+      return { isValid: false, reason: "Missing coordinate variables" };
     }
+    if (event.priceHigh <= event.priceLow) {
+      return { isValid: false, reason: "priceHigh must be strictly greater than priceLow" };
+    }
+
+    const props = event.properties || {};
+    if (props.level_100 !== event.priceHigh) {
+      return { isValid: false, reason: "level_100 must equal priceHigh" };
+    }
+    if (props.level_0 !== event.priceLow) {
+      return { isValid: false, reason: "level_0 must equal priceLow" };
+    }
+
+    const expectedMidpoint = (event.priceHigh + event.priceLow) / 2;
+    if (Math.abs(props.level_50 - expectedMidpoint) > 0.001) {
+      return { isValid: false, reason: "level_50 must equal exact midpoint" };
+    }
+
+    const expected75 = event.priceLow + 0.75 * (event.priceHigh - event.priceLow);
+    if (Math.abs(props.level_75 - expected75) > 0.001) {
+      return { isValid: false, reason: "level_75 incorrect" };
+    }
+
+    const expected25 = event.priceLow + 0.25 * (event.priceHigh - event.priceLow);
+    if (Math.abs(props.level_25 - expected25) > 0.001) {
+      return { isValid: false, reason: "level_25 incorrect" };
+    }
+
     return { isValid: true, reason: "" };
   }
 
@@ -173,7 +1014,7 @@ class DealingRangeEngine extends BaseEngine {
       event_id: event.id,
       root_event_id: null,
       parent_event_id: null,
-      detector_id: event.detectorId || 'DEALING_RANGE_v1',
+      detector_id: event.detectorId || 'DEALING_RANGE_v2',
       symbol: event.symbol || '',
       timeframe: event.timeframe || 1,
       concept_family: 'Price Delivery',

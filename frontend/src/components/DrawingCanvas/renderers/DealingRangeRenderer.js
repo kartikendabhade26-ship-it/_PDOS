@@ -10,32 +10,62 @@ export default class DealingRangeRenderer {
     
     const t0 = event.timeStart || event.time;
     let t1 = event.timeEnd;
-    if (!t1 || (utils.replayMode && utils.limit && t1 > utils.limit)) {
-      if (utils.replayMode && utils.limit && utils.limit !== Infinity) {
-        t1 = utils.limit;
-      } else if (allBars.length > 0) {
-        t1 = allBars[allBars.length - 1].time;
+    
+    if (t1) {
+      // Range is completed. Stop projection at event.timeEnd + 5 bars for readability.
+      const idx = allBars.findIndex(b => b.time >= t1);
+      if (idx !== -1) {
+        const targetIdx = Math.min(allBars.length - 1, idx + 5);
+        t1 = allBars[targetIdx].time;
       } else {
-        t1 = event.time + timeframe * 60 * 10;
+        t1 = t1 + timeframe * 60 * 5;
+      }
+    } else {
+      // Range is active. Extend to current bar + 20 bars.
+      if (utils.replayMode && utils.limit && utils.limit !== Infinity) {
+        t1 = utils.limit + timeframe * 60 * 20;
+      } else if (allBars.length > 0) {
+        t1 = allBars[allBars.length - 1].time + timeframe * 60 * 20;
+      } else {
+        t1 = event.time + timeframe * 60 * 50;
       }
     }
 
-    const coordsStart = utils.pointToCoords({ time: t0, price: event.priceHigh });
-    const coordsEnd = utils.pointToCoords({ time: t1, price: event.priceLow });
+    const props = event.properties || {};
+    const price100 = props.level_100 !== undefined ? props.level_100 : event.priceHigh;
+    const price75  = props.level_75 !== undefined ? props.level_75 : (event.priceLow + 0.75 * (event.priceHigh - event.priceLow));
+    const price50  = props.level_50 !== undefined ? props.level_50 : (event.priceLow + 0.50 * (event.priceHigh - event.priceLow));
+    const price25  = props.level_25 !== undefined ? props.level_25 : (event.priceLow + 0.25 * (event.priceHigh - event.priceLow));
+    const price0   = props.level_0 !== undefined ? props.level_0 : event.priceLow;
+
+    const coordsStart = utils.pointToCoords({ time: t0, price: price100 });
+    const coordsEnd = utils.pointToCoords({ time: t1, price: price0 });
 
     if (!coordsStart || !coordsEnd) return { visible: false };
 
-    const rx0 = Math.round(Math.min(coordsStart.x, coordsEnd.x));
-    const rx1 = Math.round(Math.max(coordsStart.x, coordsEnd.x));
-    const ryHigh = Math.round(Math.min(coordsStart.y, coordsEnd.y));
-    const ryLow = Math.round(Math.max(coordsStart.y, coordsEnd.y));
+    const rx0 = Math.round(coordsStart.x);
+    const rx1 = Math.round(coordsEnd.x);
+
+    const ry100 = Math.round(utils.pointToCoords({ time: t0, price: price100 })?.y);
+    const ry75  = Math.round(utils.pointToCoords({ time: t0, price: price75 })?.y);
+    const ry50  = Math.round(utils.pointToCoords({ time: t0, price: price50 })?.y);
+    const ry25  = Math.round(utils.pointToCoords({ time: t0, price: price25 })?.y);
+    const ry0   = Math.round(utils.pointToCoords({ time: t0, price: price0 })?.y);
 
     return {
       visible: true,
       rx0,
       rx1,
-      ryHigh,
-      ryLow,
+      ry100,
+      ry75,
+      ry50,
+      ry25,
+      ry0,
+      price100,
+      price75,
+      price50,
+      price25,
+      price0,
       event,
       debugMode: utils.debugMode
     };
@@ -43,117 +73,63 @@ export default class DealingRangeRenderer {
 
   draw(ctx, projected, config, isSelected) {
     if (!projected.visible) return;
-    const { rx0, rx1, ryHigh, ryLow, event, debugMode } = projected;
-    
-    // Check if event is active/developing vs completed vs invalidated
-    const isHistorical = event.state === 'completed' || event.state === 'invalidated';
-    const opacity = isSelected ? 1.0 : (isHistorical ? 0.2 : 0.85);
+    const { rx0, rx1, ry100, ry75, ry50, ry25, ry0, price100, price75, price50, price25, price0, event } = projected;
 
-    const priceHigh = event.priceHigh;
-    const priceLow = event.priceLow;
-    const equilibriumPrice = (priceHigh + priceLow) / 2;
+    ctx.save();
 
-    const height = ryLow - ryHigh;
-    const ryEq = ryHigh + height * 0.5;
-    const ry25 = ryHigh + height * 0.75;
-    const ry75 = ryHigh + height * 0.25;
+    const yTop = Math.min(ry100, ry0);
+    const yBot = Math.max(ry100, ry0);
+    const yMid = ry50;
 
-    const direction = event.direction; // 'bullish' | 'bearish'
-    const colorPremium = '#ff1744'; // Pink/Red
-    const colorDiscount = '#00b0ff'; // Teal/Blue
+    // 1. Draw premium (top) and discount (bottom) background fills
+    ctx.fillStyle = 'rgba(38, 166, 154, 0.08)'; // Premium green fill
+    ctx.fillRect(rx0, yTop, rx1 - rx0, yMid - yTop);
 
-    if (debugMode) {
-      ctx.save();
-      ctx.fillStyle = hexToRGBA(direction === 'bullish' ? colorDiscount : colorPremium, opacity * 0.03);
-      ctx.fillRect(rx0, ryHigh, rx1 - rx0, height);
+    ctx.fillStyle = 'rgba(239, 83, 80, 0.08)'; // Discount red fill
+    ctx.fillRect(rx0, yMid, rx1 - rx0, yBot - yMid);
 
-      ctx.strokeStyle = hexToRGBA(direction === 'bullish' ? colorDiscount : colorPremium, opacity * 0.5);
-      ctx.lineWidth = isSelected ? 2 : 1;
-      ctx.strokeRect(rx0, ryHigh, rx1 - rx0, height);
+    // 2. Draw thin left vertical line
+    ctx.lineWidth = 1.0;
+    ctx.strokeStyle = 'rgba(178, 181, 190, 0.4)';
+    ctx.beginPath();
+    ctx.moveTo(rx0, yTop);
+    ctx.lineTo(rx0, yBot);
+    ctx.stroke();
 
-      ctx.strokeStyle = hexToRGBA('#ffffff', opacity * 0.5);
-      ctx.setLineDash([4, 4]);
+    // 3. Draw horizontal level lines
+    const levels = [
+      { ry: ry100, label: '0',    price: price100, color: '#26a69a', width: 1.5 },
+      { ry: ry75,  label: '0.25', price: price75,  color: '#26a69a', width: 1.0 },
+      { ry: ry50,  label: '0.5',  price: price50,  color: '#26a69a', width: 1.5 },
+      { ry: ry25,  label: '0.75', price: price25,  color: '#ef5350', width: 1.0 },
+      { ry: ry0,   label: '1',    price: price0,   color: '#ef5350', width: 1.5 }
+    ];
+
+    levels.forEach(level => {
+      if (level.ry === undefined || isNaN(level.ry)) return;
+      ctx.lineWidth = level.width;
+      ctx.strokeStyle = level.color;
       ctx.beginPath();
-      ctx.moveTo(rx0, ryEq);
-      ctx.lineTo(rx1, ryEq);
+      ctx.moveTo(rx0, level.ry);
+      ctx.lineTo(rx1, level.ry);
       ctx.stroke();
-      ctx.restore();
+    });
 
-      ctx.save();
-      ctx.font = 'bold 9px Outfit, monospace';
-      ctx.fillStyle = hexToRGBA('#ffffff', opacity * 0.8);
-      ctx.textBaseline = 'middle';
-      ctx.textAlign = 'left';
-      ctx.fillText(`Range (${event.direction})`, rx0 + 8, ryHigh + 10);
-      ctx.fillText('EQ (50%)', rx1 + 6, ryEq);
-      ctx.fillText('High (100%)', rx1 + 6, ryHigh);
-      ctx.fillText('Low (0%)', rx1 + 6, ryLow);
-      ctx.restore();
-      return;
-    }
-
-    ctx.save();
-    
-    // Draw Premium zone shading (High to Eq)
-    ctx.fillStyle = hexToRGBA(colorPremium, opacity * 0.04);
-    ctx.fillRect(rx0, ryHigh, rx1 - rx0, ryEq - ryHigh);
-
-    // Draw Discount zone shading (Eq to Low)
-    ctx.fillStyle = hexToRGBA(colorDiscount, opacity * 0.04);
-    ctx.fillRect(rx0, ryEq, rx1 - rx0, ryLow - ryEq);
-
-    // Draw grid lines
-    ctx.lineWidth = isSelected ? 1.8 : 1.0;
-    
-    // High Boundary
-    ctx.strokeStyle = hexToRGBA(colorPremium, opacity * 0.4);
-    ctx.beginPath();
-    ctx.moveTo(rx0, ryHigh);
-    ctx.lineTo(rx1, ryHigh);
-    ctx.stroke();
-
-    // Low Boundary
-    ctx.strokeStyle = hexToRGBA(colorDiscount, opacity * 0.4);
-    ctx.beginPath();
-    ctx.moveTo(rx0, ryLow);
-    ctx.lineTo(rx1, ryLow);
-    ctx.stroke();
-
-    // Equilibrium (50%)
-    ctx.strokeStyle = hexToRGBA(direction === 'bullish' ? colorDiscount : colorPremium, opacity * 0.5);
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(rx0, ryEq);
-    ctx.lineTo(rx1, ryEq);
-    ctx.stroke();
-
-    // 25% and 75% Fibonacci levels
-    ctx.strokeStyle = hexToRGBA('#ffffff', opacity * 0.2);
-    ctx.setLineDash([2, 2]);
-    
-    ctx.beginPath();
-    ctx.moveTo(rx0, ry25);
-    ctx.lineTo(rx1, ry25);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(rx0, ry75);
-    ctx.lineTo(rx1, ry75);
-    ctx.stroke();
-
-    ctx.restore();
-
-    // Draw Right Axis Brackets / labels
-    ctx.save();
-    ctx.font = '9px Outfit, sans-serif';
-    ctx.fillStyle = hexToRGBA('#ffffff', opacity * 0.75);
+    // 4. Draw the text labels at the end of each line
+    ctx.font = '11px "Inter", "Outfit", sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     
-    ctx.fillText('50% (EQ)', rx1 + 6, ryEq);
-    ctx.fillText('100% (High)', rx1 + 6, ryHigh);
-    ctx.fillText('0% (Low)', rx1 + 6, ryLow);
-    
+    levels.forEach(level => {
+      if (level.ry === undefined || isNaN(level.ry)) return;
+      ctx.fillStyle = level.color;
+      const priceFmt = level.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const text = `${level.label} (${priceFmt})`;
+      
+      // Draw text at the right side of the horizontal line
+      ctx.fillText(text, rx1 + 6, level.ry);
+    });
+
     ctx.restore();
   }
 }

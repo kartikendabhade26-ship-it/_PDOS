@@ -30,6 +30,11 @@ class SqliteRegistryRepository {
     db.prepare('DELETE FROM market_bars WHERE symbol = ?').run(symbol);
   }
 
+  deleteBarsExcludingHTF(dbName, symbol) {
+    const db = getDB(dbName);
+    db.prepare('DELETE FROM market_bars WHERE symbol = ? AND timeframe NOT IN (240, 1440)').run(symbol);
+  }
+
   // --- Candlestick Methods ---
   
   insertBars(dbName, symbol, timeframe, bars) {

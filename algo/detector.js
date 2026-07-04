@@ -182,7 +182,7 @@ function getCandidates(conceptType, bars, limit = 100, preComputedSwings = null,
       const isSsl = dir.startsWith('ssl') || dir.startsWith('eql') || dir.startsWith('reql');
       return isBullish ? isSsl : !isSsl;
     });
-  } else if (conceptType.startsWith('liquidity_')) {
+  } else if (conceptType.startsWith('liquidity_') && !conceptType.startsWith('liquidity_interaction')) {
     if (conceptType.includes('bsl')) {
       filtered = all.filter(c => c.direction === 'bsl' || c.direction === 'eqh' || c.direction === 'reqh');
     } else if (conceptType.includes('ssl')) {

@@ -273,21 +273,21 @@ const server = http.createServer(async (req, res) => {
           if (force) {
             // Delete ALL bars + events for this symbol to prevent mixing old + new data
             const db = getDB();
-            db.prepare('DELETE FROM market_bars WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM market_bars WHERE symbol = ? AND timeframe NOT IN (240, 1440)').run(symbol);
             db.prepare('DELETE FROM structure_events WHERE symbol = ?').run(symbol);
             db.prepare('DELETE FROM liquidity_objects WHERE symbol = ?').run(symbol);
             db.prepare('DELETE FROM research_runs WHERE symbol = ?').run(symbol);
-            logger.info('SERVER', `[Force Re-sync] Cleared all old data for ${symbol}`);
+            logger.info('SERVER', `[Force Re-sync] Cleared all old data for ${symbol} (excl. 4h/Daily)`);
           }
           triggerWorkerSync(symbol, fp, { mode, limitBars, resume });
         } else {
           if (force) {
             const db = getDB();
-            db.prepare('DELETE FROM market_bars WHERE symbol = ?').run(symbol);
+            db.prepare('DELETE FROM market_bars WHERE symbol = ? AND timeframe NOT IN (240, 1440)').run(symbol);
             db.prepare('DELETE FROM structure_events WHERE symbol = ?').run(symbol);
             db.prepare('DELETE FROM liquidity_objects WHERE symbol = ?').run(symbol);
             db.prepare('DELETE FROM research_runs WHERE symbol = ?').run(symbol);
-            logger.info('SERVER', `[Force Re-sync] Cleared all old data for ${symbol}`);
+            logger.info('SERVER', `[Force Re-sync] Cleared all old data for ${symbol} (excl. 4h/Daily)`);
           }
           triggerWorkerSync(symbol, filePath, { mode, limitBars, resume });
         }
@@ -1343,7 +1343,7 @@ server.listen(PORT, () => {
           csvChanged = true;
           logger.info('SERVER', `[Startup] CSV file for ${symbol} modified after last pipeline run. Forcing re-sync.`);
           // Clear ALL old data for this symbol
-          db.prepare('DELETE FROM market_bars WHERE symbol = ?').run(symbol);
+          db.prepare('DELETE FROM market_bars WHERE symbol = ? AND timeframe NOT IN (240, 1440)').run(symbol);
           db.prepare('DELETE FROM structure_events WHERE symbol = ?').run(symbol);
           db.prepare('DELETE FROM liquidity_objects WHERE symbol = ?').run(symbol);
           db.prepare('DELETE FROM research_runs WHERE symbol = ?').run(symbol);

@@ -331,7 +331,7 @@ export default function App() {
     swings: true,
     liquidity: true,
     structure: true,
-    dealingRanges: false,
+    dealingRanges: true,
     takenLiqOpacity: 0.25   // alpha for taken (terminated) liquidity lines
   });
 
@@ -350,7 +350,8 @@ export default function App() {
     swings: true,
     liquidity: true,
     structure: true,
-    dealingRanges: false,
+    dealingRanges: true,
+    showHistoricalRanges: false,
     intent: true,
     delivery: true
   });
@@ -2519,42 +2520,41 @@ export default function App() {
             </button>
           </div>
 
-          {/* Layers dropdown (analysis view only) */}
-          {viewMode === 'analysis' && (
-            <div className="layers-wrap">
-              <button
-                className="layers-btn"
-                onClick={() => setIsLayersDropdownOpen(!isLayersDropdownOpen)}
-                title="Toggle analysis layer visibility"
-              >
-                <span>Layers</span>
-                <ChevronDown size={10} />
-              </button>
-              {isLayersDropdownOpen && (
-                <div className="layers-menu">
-                  {[
-                    { key: 'swings', label: 'Swings' },
-                    { key: 'liquidity', label: 'Liquidity' },
-                    { key: 'structure', label: 'Structure' },
-                    { key: 'dealingRanges', label: 'Dealing Ranges' },
-                    { key: 'intent', label: 'Intent' },
-                    { key: 'delivery', label: 'Delivery' }
-                  ].map(item => (
-                    <label key={item.key}>
-                      <input
-                        type="checkbox"
-                        checked={analysisLayers[item.key]}
-                        onChange={(e) => {
-                          handleLayerToggle(item.key, e.target.checked);
-                        }}
-                      />
-                      {item.label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {/* Layers dropdown */}
+          <div className="layers-wrap">
+            <button
+              className="layers-btn"
+              onClick={() => setIsLayersDropdownOpen(!isLayersDropdownOpen)}
+              title="Toggle analysis layer visibility"
+            >
+              <span>Layers</span>
+              <ChevronDown size={10} />
+            </button>
+            {isLayersDropdownOpen && (
+              <div className="layers-menu">
+                {[
+                  { key: 'swings', label: 'Swings' },
+                  { key: 'liquidity', label: 'Liquidity' },
+                  { key: 'structure', label: 'Structure' },
+                  { key: 'dealingRanges', label: 'Dealing Ranges' },
+                  { key: 'showHistoricalRanges', label: 'Show Historical Ranges' },
+                  { key: 'intent', label: 'Intent' },
+                  { key: 'delivery', label: 'Delivery' }
+                ].map(item => (
+                  <label key={item.key}>
+                    <input
+                      type="checkbox"
+                      checked={analysisLayers[item.key]}
+                      onChange={(e) => {
+                        handleLayerToggle(item.key, e.target.checked);
+                      }}
+                    />
+                    {item.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Zones toggle (only when a concept is selected) */}
           {selectedConcept && (
@@ -2625,6 +2625,7 @@ export default function App() {
                 <option value={40000}>1M</option>
                 <option value={80000}>3M</option>
                 <option value={120000}>4M</option>
+                <option value={0}>Full (15 Yrs)</option>
               </select>
             )}
           </div>

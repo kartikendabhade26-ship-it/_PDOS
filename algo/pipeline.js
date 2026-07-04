@@ -224,7 +224,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   // Clear existing run data to prevent duplication on restart
   if (!chunkInfo) {
     RegistryService.clearRunData(dbName, runId);
-    RegistryService.deleteBars(dbName, symbol);
+    RegistryService.deleteBarsExcludingHTF(dbName, symbol);
   }
 
   const stageTimings = {
@@ -304,20 +304,21 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   const concepts = [
     'swing_bullish', 'swing_bearish',
     'liquidity_bsl', 'liquidity_ssl',
-    'liquidity_interaction',
-    'price_delivery',
-    'structure_confirm',
     'dealing_range'
   ];
 
   // Timeframes list to run candidate detectors on
+  // Fetch full daily and 4-hour historical records from the database instead of the aggregated tail subset.
+  const fullDailyBars = RegistryService.getCandles(dbName, symbol, 1440, 0, 9999999999, 100000);
+  const fullFourHourBars = RegistryService.getCandles(dbName, symbol, 240, 0, 9999999999, 100000);
+
   const timeframes = [
     { tf: 1, bars: rawBars },
     { tf: 5, bars: preAggregated.tf5Bars },
     { tf: 15, bars: preAggregated.tf15Bars },
     { tf: 60, bars: preAggregated.tf60Bars },
-    { tf: 240, bars: preAggregated.tf240Bars },
-    { tf: 1440, bars: preAggregated.tf1440Bars }
+    { tf: 240, bars: fullFourHourBars.length > 0 ? fullFourHourBars : preAggregated.tf240Bars },
+    { tf: 1440, bars: fullDailyBars.length > 0 ? fullDailyBars : preAggregated.tf1440Bars }
   ];
 
   // 2. Detect all events across timeframes
@@ -401,11 +402,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
     if (activeRange) {
       const searchReq = pdArrayContextEngine.determineSearchRequest(activeRange, t.bars);
       if (searchReq) {
-        const constrainedConcepts = [
-          'fvg_bullish', 'fvg_bearish',
-          'ob_bullish', 'ob_bearish',
-          'breaker_bullish', 'breaker_bearish'
-        ];
+        const constrainedConcepts = [];
         const detectedArrays = [];
         for (const concept of constrainedConcepts) {
           const limit = 50000; // Large enough to keep all events in 35MB window, small enough to prevent database bloating
@@ -1080,7 +1077,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
             concept_type,
             concept_state,
             e.time,
-            outcome.mitigation_time || null,
+            e.timeEnd || outcome.mitigation_time || null,
             e.priceHigh,
             e.priceLow,
             e.direction,
@@ -1311,6 +1308,13 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       rangesByTf[r.timeframe].push(r);
     }
 
+    // Group PD arrays by timeframe for fast lookup
+    const pdArraysByTf = {};
+    for (const arr of allPdArrays) {
+      if (!pdArraysByTf[arr.timeframe]) pdArraysByTf[arr.timeframe] = [];
+      pdArraysByTf[arr.timeframe].push(arr);
+    }
+
     const tfs = [1, 5, 15, 60, 240, 1440];
 
     for (const range of allRanges) {
@@ -1348,12 +1352,11 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       }
 
       // Find active PD arrays inside this Dealing Range
-      for (const arr of allPdArrays) {
-        if (arr.timeframe !== range.timeframe) continue; // Same timeframe matrix nesting
+      const sameTfPdArrays = pdArraysByTf[range.timeframe] || [];
+      for (const arr of sameTfPdArrays) {
+        if (arr.time < rStart || arr.time > rEnd) continue;
         if (arr.priceLow >= rLow &&
-            arr.priceHigh <= rHigh &&
-            arr.time >= rStart &&
-            arr.time <= rEnd) {
+            arr.priceHigh <= rHigh) {
           insertRelationship.run(runId, range.id, arr.id, 'contains');
           stageCounts.relationshipsBuilt++;
         }

@@ -326,6 +326,8 @@ export default function ChartViewport({
               narrativeMode={narrativeMode}
               narrativeFocusRangeId={narrativeFocusRangeId}
               setNarrativeFocusRangeId={setNarrativeFocusRangeId}
+              viewMode={viewMode}
+              analysisLayers={analysisLayers}
               debugOverlayFilters={debugOverlayFilters}
               debugMode={debugMode}
               onRenderCompleted={onChart1Ready}
@@ -595,6 +597,7 @@ export default function ChartViewport({
         selectedAlgoCandidate={selectedAlgoCandidate}
         setSelectedAlgoCandidate={setSelectedAlgoCandidate}
         onSaveValidation={saveExplorerLabel}
+        algoCandidates={algoCandidates}
       />
 
       {/* HUD OHLC BAR */}
