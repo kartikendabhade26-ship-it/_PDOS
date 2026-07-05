@@ -14,12 +14,21 @@ const getStrength = (s, bars) => s.strength !== undefined ? s.strength : calcula
 class LiquidityEngine extends BaseEngine {
   detect(bars, options = {}, context = {}) {
     const { preComputedSwings, symbol } = context;
+    const timeframeObj = this.timeframe || 1;
+
+    if (global.profiler) {
+      global.profiler.incrementCounter('barsProcessed', bars.length);
+    }
+
+    if (global.profiler) global.profiler.startEnginePhase('LiquidityEngine', timeframeObj, 'resolveSwings');
     const swingEngine = new SwingEngine();
     const swingsRaw = preComputedSwings || swingEngine.findSwings(bars);
     
     const swingHighs = (swingsRaw.swingHighs || []).filter(s => getStrength(s, bars) >= 1);
     const swingLows = (swingsRaw.swingLows || []).filter(s => getStrength(s, bars) >= 1);
+    if (global.profiler) global.profiler.endEnginePhase('LiquidityEngine', timeframeObj, 'resolveSwings');
     
+    if (global.profiler) global.profiler.startEnginePhase('LiquidityEngine', timeframeObj, 'clustering');
     const symConfig = config.symbols[symbol] || config.symbols['default'];
     const TOLERANCE = symConfig.liquidityTolerance;
     const pools = [];
@@ -122,7 +131,9 @@ class LiquidityEngine extends BaseEngine {
         timeframe = diffMin;
       }
     }
+    if (global.profiler) global.profiler.endEnginePhase('LiquidityEngine', timeframeObj, 'clustering');
 
+    if (global.profiler) global.profiler.startEnginePhase('LiquidityEngine', timeframeObj, 'qualityScoring');
     // Calculate Quality Score & finalize contributingSwingIds
     for (const p of pools) {
       const maxStrength = p.swings.reduce((max, s) => Math.max(max, getStrength(s, bars)), 1);
@@ -138,7 +149,11 @@ class LiquidityEngine extends BaseEngine {
       p.properties.qualityScore = Math.min(100, Math.round(score));
       p.properties.contributingSwingIds = p.swings.map(s => `${s.id}_tf${timeframe}`);
     }
+    if (global.profiler) global.profiler.endEnginePhase('LiquidityEngine', timeframeObj, 'qualityScoring');
 
+    if (global.profiler) {
+      global.profiler.incrementCounter('eventsProduced', pools.length);
+    }
     return pools;
   }
 

@@ -1,47 +1,55 @@
 /**
  * algo/engines/BaseEngine.js
- * Base Engine Contract. Defines standard interface for all PDOS Price Engines.
+ * Abstract base class for all PDOS detection engines.
+ * Provides the common constructor interface (timeframe, symbol)
+ * and enforces the detect / updateState / validate / serialize contract.
+ * All logic lives in subclasses — this class has no detection logic.
  */
 
 class BaseEngine {
+  constructor(timeframe = 1, symbol = '') {
+    this.timeframe = timeframe;
+    this.symbol = symbol;
+  }
+
   /**
-   * Run primitive candidate detection on a series of bars.
-   * @param {Array} bars - Raw or aggregated price bars
-   * @param {Object} options - Detection parameters (tolerances, thresholds)
-   * @param {Object} context - Supporting precomputed data (swings, ATR)
-   * @returns {Array<Object>} List of candidate event objects
+   * Primary detection pass — must be overridden by subclasses.
+   * @param {Array} bars - Array of OHLCV bar objects
+   * @param {Object} options - Engine-specific option flags
+   * @param {Object} context - Shared pre-computed context (swings, liquidity, etc.)
+   * @returns {Array} Raw detected event objects
    */
   detect(bars, options = {}, context = {}) {
-    throw new Error("detect() must be implemented by engine subclass");
+    throw new Error(`${this.constructor.name}.detect() not implemented`);
   }
 
   /**
-   * Update the state lifecycle of active events (sweeps, mitigation, reclaims, breakout archiving).
-   * @param {Array<Object>} activeEvents - Active events to trace
-   * @param {Array} bars - Historical/streaming price bars
-   * @param {Object} context - ATR, volatility, and SMA values
-   * @returns {Array<Object>} List of state transition records
+   * State update pass for existing active events.
+   * @param {Array} activeEvents - Currently open/active events
+   * @param {Array} bars - Current bar window
+   * @param {Object} context - Shared context
+   * @returns {Array} Updated event objects
    */
   updateState(activeEvents, bars, context = {}) {
-    throw new Error("updateState() must be implemented by engine subclass");
+    return [];
   }
 
   /**
-   * Validate a single event against mathematical or logical rules.
-   * @param {Object} event - Event object to check
-   * @returns {Object} { isValid: boolean, reason: string }
+   * Validate an event before persisting.
+   * @param {Object} event - Raw detected event
+   * @returns {{ isValid: boolean, reason: string }}
    */
   validate(event) {
-    return { isValid: true, reason: "" };
+    return { isValid: true, reason: '' };
   }
 
   /**
-   * Serialize the engine event into the standard database schema record.
-   * @param {Object} event - Event object to serialize
-   * @returns {Object} DB insert fields
+   * Serialize an event to the structure_events DB schema.
+   * @param {Object} event - Raw detected event
+   * @returns {Object} DB-ready event record
    */
   serialize(event) {
-    throw new Error("serialize() must be implemented by engine subclass");
+    return event;
   }
 }
 

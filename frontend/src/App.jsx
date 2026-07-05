@@ -40,16 +40,24 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
-  GripVertical
+  GripVertical,
+
+  // TradingView Pro toolbar icons (new)
+  CandlestickChart,
+  BarChart3,
+  LineChart,
+  LayoutGrid,
+  Clock,
+  Droplets,
+  Sparkles,
+  Maximize,
+  Minimize
 } from 'lucide-react';
 
 
 import ChartSettingsModal from './components/ChartSettingsModal';
 import ChartViewport from './components/ChartViewport';
 import WatchlistSidebar from './components/WatchlistSidebar';
-import ValidationWorkspace from './components/ValidationWorkspace';
-import ResearchWorkspace from './components/ResearchWorkspace';
-import DiagnosticsWorkspace from './components/DiagnosticsWorkspace';
 
 import { getESTInfo } from './utils/sessions';
 import { aggregateDevelopingCandle } from './utils/replayAggregator';
@@ -61,59 +69,6 @@ import {
 } from './utils/storage';
 import { slidingWindowCache1, slidingWindowCache2 } from './utils/SlidingWindowCache';
 
-const CONCEPT_PRESETS = [
-  { id: 'fvg_bullish',    label: 'FVG Bullish',          color: '#26a69a' },
-  { id: 'fvg_bearish',    label: 'FVG Bearish',          color: '#ef5350' },
-  { id: 'ifvg_bullish',   label: 'IFVG Bullish',         color: '#00e676' },
-  { id: 'ifvg_bearish',   label: 'IFVG Bearish',         color: '#ff1744' },
-  { id: 'ob_bullish',     label: 'Order Block Bullish',  color: '#00bcd4' },
-  { id: 'ob_bearish',     label: 'Order Block Bearish',  color: '#ff9800' },
-  { id: 'liquidity_bsl',  label: 'Buy Side Liquidity',   color: '#9c27b0' },
-  { id: 'liquidity_ssl',  label: 'Sell Side Liquidity',  color: '#f44336' },
-  { id: 'swing_bullish',  label: 'Swing Low (Bullish)',  color: '#26a69a' },
-  { id: 'swing_bearish',  label: 'Swing High (Bearish)', color: '#ef5350' },
-  { id: 'strong_swing_bullish',  label: 'Strong Swing Low',  color: '#00e676' },
-  { id: 'strong_swing_bearish',  label: 'Strong Swing High', color: '#ff1744' },
-  { id: 'premium_discount_premium',  label: 'Premium Zone',  color: '#ef5350' },
-  { id: 'premium_discount_discount', label: 'Discount Zone', color: '#26a69a' },
-  { id: 'mss_bullish',    label: 'MSS Bullish',          color: '#26a69a' },
-  { id: 'mss_bearish',    label: 'MSS Bearish',          color: '#ef5350' },
-  { id: 'bos_bullish',    label: 'BOS Bullish',          color: '#26a69a' },
-  { id: 'bos_bearish',    label: 'BOS Bearish',          color: '#ef5350' },
-  { id: 'protected_high_low_bullish',  label: 'Protected Low',  color: '#26a69a' },
-  { id: 'protected_high_low_bearish',  label: 'Protected High', color: '#ef5350' },
-  { id: 'volume_imbalance_bullish',    label: 'Vol Imbalance Bullish', color: '#26a69a' },
-  { id: 'volume_imbalance_bearish',    label: 'Vol Imbalance Bearish', color: '#ef5350' },
-  { id: 'liquidity_void_bullish',      label: 'Liq Void Bullish',      color: '#26a69a' },
-  { id: 'liquidity_void_bearish',      label: 'Liq Void Bearish',      color: '#ef5350' },
-  { id: 'amd_bullish',    label: 'AMD Bullish',          color: '#26a69a' },
-  { id: 'amd_bearish',    label: 'AMD Bearish',          color: '#ef5350' }
-];
-
-const VALIDATION_CRITERIA = [
-  { id: 'displacement', label: 'Strong Displacement (Impulse)' },
-  { id: 'sweep',        label: 'Liquidity Sweep (Pre-sweep)' },
-  { id: 'mss',          label: 'MSS / BOS (Structure Shift)' },
-  { id: 'htf',          label: 'HTF Key Level (HTF Alignment)' },
-  { id: 'reaction',     label: 'Price Reaction (Bounce/Hold)' }
-];
-
-const getVersionsForConcept = (conceptId) => {
-  if (!conceptId) return [];
-  if (conceptId.startsWith('ifvg')) {
-    return ['Common IFVG', 'Mitigated BISI', 'Mitigated SIBI'];
-  }
-  if (conceptId.startsWith('fvg')) {
-    return ['Common FVG', 'Breakaway Gap', 'Measuring Gap', 'Balanced Price Range (BPR)', 'Volume Imbalance'];
-  }
-  if (conceptId.startsWith('ob')) {
-    return ['Standard OB', 'Breaker Block', 'Mitigation Block', 'Propulsion Block', 'Rejection Block'];
-  }
-  if (conceptId.startsWith('liquidity')) {
-    return ['Equal Highs/Lows (EQH/L)', 'Trendline Liquidity', 'Swing High/Low', 'PDH/PDL'];
-  }
-  return [];
-};
 
 function debounce(func, wait) {
   let timeout;
@@ -137,10 +92,11 @@ export default function App() {
   // Data State
   const [symbols, setSymbols] = useState([]);
   const [activeSymbol, setActiveSymbol] = useState('');
-  const [activeResearchMode, setActiveResearchMode] = useState('interactive'); // 'interactive' | 'batch'
+  const [activeResearchMode] = useState('interactive'); // Analysis Mode only
   const [limitBarsInteractive, setLimitBarsInteractive] = useState(80000); // Default 80k bars (options: 2 weeks = 20k, 1 month = 40k, 3 months = 120k)
   const [syncProgress, setSyncProgress] = useState(null);
   const [isProgressOverlayVisible, setIsProgressOverlayVisible] = useState(false);
+  const userDismissedSyncRef = useRef(false);
   const [timeframe, setTimeframe] = useState(1); // minutes
   const [chartType, setChartType] = useState('candle');
   const [allBars, setAllBars] = useState([]);
@@ -315,7 +271,7 @@ export default function App() {
   const [themeColor, setThemeColor] = useState('#2962ff');
 
   // Workspace and View Mode States
-  const [workspaceTab, setWorkspaceTab] = useState('chart'); // 'chart' | 'validation' | 'research' | 'diagnostics'
+  const [workspaceTab, setWorkspaceTab] = useState('chart'); // 'chart' only
   const [debugOverlayFilters, setDebugOverlayFilters] = useState({
     swings: true,
     liquidity: true,
@@ -340,15 +296,86 @@ export default function App() {
     liquidity: true,
     structure: true,
     dealingRanges: true,
+    showHistoricalRanges: false,
     intent: true,
     delivery: true
   });
+
+  const [dealingRangeCalc, setDealingRangeCalc] = useState({
+    active: false,
+    elapsed: 0,
+    estimated: 1.8,
+    progress: 0
+  });
+
+  const handleLayerToggle = (key, checked) => {
+    if (key === 'dealingRanges' && checked) {
+      setDealingRangeCalc({
+        active: true,
+        elapsed: 0,
+        estimated: 1.8,
+        progress: 0
+      });
+
+      const startTime = Date.now();
+      const duration = 1800; // 1.8s
+
+      const interval = setInterval(() => {
+        const elapsedMs = Date.now() - startTime;
+        const progress = Math.min(100, (elapsedMs / duration) * 100);
+        const elapsed = (elapsedMs / 1000);
+        const estimated = Math.max(0, (duration - elapsedMs) / 1000);
+
+        setDealingRangeCalc(prev => ({
+          ...prev,
+          elapsed,
+          estimated,
+          progress
+        }));
+
+        if (elapsedMs >= duration) {
+          clearInterval(interval);
+          setDealingRangeCalc({ active: false, elapsed: 0, estimated: 0, progress: 0 });
+          setAnalysisLayers(prev => ({ ...prev, dealingRanges: true }));
+          setDebugOverlayFilters(prev => ({ ...prev, dealingRanges: true }));
+        }
+      }, 50);
+    } else {
+      setAnalysisLayers(prev => ({
+        ...prev,
+        [key]: checked
+      }));
+      if (key === 'dealingRanges') {
+        setDebugOverlayFilters(prev => ({
+          ...prev,
+          dealingRanges: checked
+        }));
+      }
+    }
+  };
 
   // Chart initialized callback indicator
   const [chartInitialized, setChartInitialized] = useState(false);
   
   // Right sidebar tab: 'market' | 'research' | 'chat'
   const [rightSidebarTab, setRightSidebarTab] = useState('market');
+
+  // Fullscreen/Full-canvas layout toggle
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
+  // --- AI SWINGS (TradingView Pro toolbar toggle, NEW) ---
+  // When enabled, fetches high-confidence swings from /api/ai/swings and passes
+  // AI Swings removed — aiSwingEngine.js deleted
 
   const [replayMode, setReplayMode] = useState(false);
   const [replayTimeOffset, setReplayTimeOffset] = useState(null);
@@ -603,7 +630,7 @@ export default function App() {
 
     // Fetch symbols with retry
     const fetchSymbols = (retriesLeft = 15) => {
-      fetch('http://localhost:8080/api/symbols')
+      fetch('/api/symbols')
         .then(res => res.json())
         .then(data => {
           setSymbols(data);
@@ -662,26 +689,28 @@ export default function App() {
     const tfSec = timeframe * 60;
     const capturedOffset = replayTimeOffset;
 
-    // 1. Candles URL
+    // 1. Candles URL — limit matches the selected bar window (Bars selector in toolbar).
+    // The sliding-window cache handles subsequent pan/zoom fetches.
+    const candleLimit = limitBarsInteractive > 0 ? Math.min(limitBarsInteractive, 80000) : 15000;
     let dataUrl;
     if (capturedOffset) {
-      const startSec = capturedOffset - 8000 * tfSec;
+      const startSec = capturedOffset - candleLimit * tfSec;
       const endSec   = capturedOffset + 500  * tfSec;
-      dataUrl = `http://localhost:8080/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=10000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=${candleLimit}&mode=${activeResearchMode}`;
     } else {
-      dataUrl = `http://localhost:8080/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=10000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=${candleLimit}&mode=${activeResearchMode}`;
     }
 
-    // 2. Events URL
-    const limit = 15000;
+    // 2. Events URL — reduced from 15000 to 5000 for faster initial load.
+    const limit = 5000;
     const conceptParam = '';
     let eventsUrl;
     if (capturedOffset) {
       const startSec = capturedOffset - 8000 * tfSec;
       const endSec   = capturedOffset + 500  * tfSec;
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
     } else {
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
     }
 
     // Fetch both datasets concurrently for an atomic transaction commit
@@ -700,6 +729,12 @@ export default function App() {
 
       // Batch state commit in React 18 transition
       React.startTransition(() => {
+        if (candlesData.length > 0) {
+          const minTime = candlesData[0].time;
+          const maxTime = candlesData[candlesData.length - 1].time;
+          slidingWindowCache1.clear();
+          slidingWindowCache1.setRange(activeSymbol, timeframe, activeResearchMode || 'interactive', minTime, maxTime, candlesData, eventsData || []);
+        }
         setAllBars(candlesData);
         setAlgoCandidates(eventsData || []);
         setHudBar(null);
@@ -740,7 +775,7 @@ export default function App() {
     setLoadingState2({ candles: true, events: true });
     setChart2Ready(false);
 
-    let dataUrl = `http://localhost:8080/api/data?symbol=${activeSymbol}&timeframe=${timeframe2}&limit=10000&mode=${activeResearchMode}`;
+    let dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe2}&limit=10000&mode=${activeResearchMode}`;
     
     const limit = 15000;
     const conceptParam = '';
@@ -749,9 +784,9 @@ export default function App() {
       const tfSec = timeframe2 * 60;
       const startSec = replayTimeOffset - 8000 * tfSec;
       const endSec   = replayTimeOffset + 500  * tfSec;
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&start=${startSec}&end=${endSec}&mode=${activeResearchMode}`;
     } else {
-      eventsUrl = `http://localhost:8080/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
+      eventsUrl = `/api/events?symbol=${activeSymbol}&timeframe=${timeframe2}&concept=${conceptParam}&limit=${limit}&display_mode=${displayMode}&mode=${activeResearchMode}`;
     }
 
     Promise.all([
@@ -767,6 +802,12 @@ export default function App() {
       }
 
       React.startTransition(() => {
+        if (candlesData.length > 0) {
+          const minTime = candlesData[0].time;
+          const maxTime = candlesData[candlesData.length - 1].time;
+          slidingWindowCache2.clear();
+          slidingWindowCache2.setRange(activeSymbol, timeframe2, activeResearchMode || 'interactive', minTime, maxTime, candlesData, eventsData || []);
+        }
         setAllBars2(candlesData);
         setAlgoCandidates2(eventsData || []);
         setLoadingState2({ candles: false, events: false });
@@ -844,7 +885,7 @@ export default function App() {
     const cand = selectedAlgoCandidate;
 
     try {
-      const res = await fetch(`http://localhost:8080/api/validations`, {
+      const res = await fetch(`/api/validations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ eventId: cand.id, status, notes })
@@ -960,22 +1001,46 @@ export default function App() {
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          visible: false,
-          labelVisible: false,
+          visible: true,
+          labelVisible: true,
+          color: isDarkMode ? '#787b86' : '#9598a1',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
         },
         horzLine: {
-          visible: false,
-          labelVisible: false,
+          visible: true,
+          labelVisible: true,
+          color: isDarkMode ? '#787b86' : '#9598a1',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
         },
       },
       rightPriceScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         scaleMargins: { top: 0.08, bottom: 0.2 },
+        ensureEdgeTickMarksVisible: true,
       },
       timeScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         timeVisible: true,
         secondsVisible: false,
+        rightOffset: 5,
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const d = new Date(time * 1000);
+          const h = String(d.getUTCHours()).padStart(2, '0');
+          const m = String(d.getUTCMinutes()).padStart(2, '0');
+          // Show HH:MM for intraday, hide seconds always
+          if (tickMarkType === 0) return `${h}:${m}`;
+          if (tickMarkType === 1) return `${h}:${m}`;
+          if (tickMarkType === 2) {
+            const mon = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            return `${mon}-${day}`;
+          }
+          return `${h}:${m}`;
+        },
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -983,9 +1048,8 @@ export default function App() {
 
     chartRef.current = chart;
 
-    // Add Volume pane at the bottom
+    // Add Volume pane at the bottom — colored by candle direction (green up / red down)
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: 'rgba(38, 166, 154, 0.3)',
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
@@ -1132,17 +1196,27 @@ export default function App() {
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { visible: false, labelVisible: false },
-        horzLine: { visible: false, labelVisible: false },
+        vertLine: {
+          visible: true, labelVisible: true,
+          color: isDarkMode ? '#787b86' : '#9598a1', width: 1, style: 2,
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
+        },
+        horzLine: {
+          visible: true, labelVisible: true,
+          color: isDarkMode ? '#787b86' : '#9598a1', width: 1, style: 2,
+          labelBackgroundColor: isDarkMode ? '#363a45' : '#9598a1',
+        },
       },
       rightPriceScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         scaleMargins: { top: 0.08, bottom: 0.2 },
+        ensureEdgeTickMarksVisible: true,
       },
       timeScale: {
         borderColor: isDarkMode ? '#2a2e39' : '#d1d4dc',
         timeVisible: true,
         secondsVisible: false,
+        rightOffset: 5,
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -1216,7 +1290,7 @@ export default function App() {
 
     try {
       const mode = activeResearchMode || 'interactive';
-      const url = `http://localhost:8080/api/query/visible-window?symbol=${symbol}&timeframe=${tf}&start=${queryStart}&end=${queryEnd}&mode=${mode}`;
+      const url = `/api/query/visible-window?symbol=${symbol}&timeframe=${tf}&start=${queryStart}&end=${queryEnd}&mode=${mode}`;
       
       const res = await fetch(url);
       const data = await res.json();
@@ -1335,8 +1409,9 @@ export default function App() {
   // Trigger manual database sync
   const handleTriggerSync = async () => {
     try {
+      userDismissedSyncRef.current = false;
       setIsProgressOverlayVisible(true);
-      const res = await fetch(`http://localhost:8080/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limitBarsInteractive}`);
+      const res = await fetch(`/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limitBarsInteractive}&force=true`);
       const data = await res.json();
       if (!data.success) {
         alert("Failed to start sync: " + data.message);
@@ -1354,13 +1429,15 @@ export default function App() {
     let reloadTimer = null;
     const poll = async () => {
       try {
-        const res = await fetch(`http://localhost:8080/api/algo/sync/progress?symbol=${activeSymbol}&mode=${activeResearchMode}`);
+        const res = await fetch(`/api/algo/sync/progress?symbol=${activeSymbol}&mode=${activeResearchMode}`);
         const data = await res.json();
         if (data && data.success) {
           setSyncProgress(data);
           
           if (data.status === 'running') {
-            setIsProgressOverlayVisible(true);
+            if (!userDismissedSyncRef.current) {
+              setIsProgressOverlayVisible(true);
+            }
           } else if (data.status === 'completed' || data.status === 'error') {
             if (isProgressOverlayVisible && !reloadTimer) {
               clearInterval(timer);
@@ -1386,6 +1463,22 @@ export default function App() {
       if (reloadTimer) clearTimeout(reloadTimer);
     };
   }, [isProgressOverlayVisible, activeSymbol, activeResearchMode]);
+
+  // Fetch central config on load
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (data && data.success && typeof data.analysisBars === 'number') {
+          setLimitBarsInteractive(data.analysisBars);
+        }
+      } catch (e) {
+        console.error("Failed to load central config:", e);
+      }
+    };
+    fetchConfig();
+  }, []);
 
 
 
@@ -1420,9 +1513,10 @@ export default function App() {
           borderDownColor,
           wickUpColor,
           wickDownColor,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 },
         });
       } else if (chartType === 'bar') {
-        series2Ref.current = chart2.addSeries(BarSeries, { upColor, downColor });
+        series2Ref.current = chart2.addSeries(BarSeries, { upColor, downColor, priceFormat: { type: 'price', precision: 2, minMove: 0.25 } });
       } else {
         series2Ref.current = chart2.addSeries(LineSeries, { color: themeColor, lineWidth: 2 });
       }
@@ -1465,7 +1559,9 @@ export default function App() {
       volume2Ref.current.setData(displayBars.map(b => ({
         time: b.time,
         value: b.volume,
-        color: b.close >= b.open ? 'rgba(8, 153, 129, 0.2)' : (isDarkMode ? 'rgba(242, 54, 69, 0.2)' : 'rgba(19, 23, 34, 0.2)')
+        color: b.close >= b.open
+          ? 'rgba(38, 166, 154, 0.5)'
+          : 'rgba(239, 83, 80, 0.5)'
       })));
     }
   };
@@ -1537,11 +1633,13 @@ export default function App() {
           borderDownColor: borderDownColor,
           wickUpColor: wickUpColor,
           wickDownColor: wickDownColor,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 },
         });
       } else if (chartType === 'bar') {
         seriesRef.current = chart.addSeries(BarSeries, {
           upColor: upColor,
           downColor: downColor,
+          priceFormat: { type: 'price', precision: 2, minMove: 0.25 },
         });
       } else {
         seriesRef.current = chart.addSeries(LineSeries, {
@@ -1592,12 +1690,14 @@ export default function App() {
 
     seriesRef.current.setData(data);
 
-    // Map and load volume
+    // Map and load volume — consistent colors matching candle direction
     if (volumeRef.current) {
       volumeRef.current.setData(displayBars.map(b => ({
         time: b.time,
         value: b.volume,
-        color: b.close >= b.open ? 'rgba(8, 153, 129, 0.2)' : (isDarkMode ? 'rgba(242, 54, 69, 0.2)' : 'rgba(19, 23, 34, 0.2)')
+        color: b.close >= b.open
+          ? 'rgba(38, 166, 154, 0.5)'   // teal (matches bull candles)
+          : 'rgba(239, 83, 80, 0.5)'    // red (matches bear candles)
       })));
     }
 
@@ -2056,50 +2156,74 @@ export default function App() {
     };
   }, [chartInitialized, chart2Initialized, seriesUpdateTick, series2UpdateTick, layout]);
 
+  // AI Swings fetch removed — aiSwingEngine deleted
+
+  // --- BOTTOM STATUS BAR DERIVED DATA ---
+  // Last price + change vs previous close (uses chart's last bar; respects replay position).
+  const lastBarForStatus = useMemo(() => {
+    if (!allBars || allBars.length === 0) return null;
+    if (replayMode && replayIndex > 0) return allBars[replayIndex - 1];
+    return allBars[allBars.length - 1];
+  }, [allBars, replayMode, replayIndex]);
+
+  const prevBarForStatus = useMemo(() => {
+    if (!allBars || allBars.length < 2) return null;
+    if (replayMode && replayIndex > 1) return allBars[replayIndex - 2];
+    return allBars[allBars.length - 2];
+  }, [allBars, replayMode, replayIndex]);
+
+  const lastPrice = lastBarForStatus?.close ?? null;
+  const priceChange = (lastBarForStatus && prevBarForStatus)
+    ? lastBarForStatus.close - prevBarForStatus.close
+    : null;
+  const priceChangePct = (lastBarForStatus && prevBarForStatus && prevBarForStatus.close !== 0)
+    ? (priceChange / prevBarForStatus.close) * 100
+    : null;
+
+  // Current ICT session label (computed from wall-clock time in EST).
+  const sessionLabel = useMemo(() => {
+    const info = getESTInfo(Math.floor(Date.now() / 1000));
+    if (info.session === 'london') return 'London Session';
+    if (info.session === 'ny-am') return 'NY AM Session';
+    if (info.session === 'ny-pm') return 'NY PM Session';
+    return 'Off-session';
+  }, []);
+
+  // Timeframe label for status bar (e.g. "1m", "5m", "1H", "1D")
+  const tfLabel = useMemo(() => {
+    if (timeframe < 60) return `${timeframe}m`;
+    if (timeframe === 60) return '1H';
+    if (timeframe < 1440) return `${Math.floor(timeframe / 60)}H`;
+    if (timeframe === 1440) return '1D';
+    return `${Math.floor(timeframe / 1440)}D`;
+  }, [timeframe]);
+
   return (
-    <div className="app-container">
+    <div className={`app-container ${isFullscreen ? 'full-canvas' : ''}`}>
       {/* TOP TOOLBAR */}
       <header className="top-toolbar">
-        <div className="logo" style={{ marginRight: '8px' }}>
-          PDOS <span>MOS</span>
+        {/* LEFT: Logo wordmark (no emoji) */}
+        <div className="logo">
+          PDOS<span className="logo-dot" />
         </div>
 
-        {/* WORKSPACE TAB SWITCHER */}
-        <div className="workspace-tabs" style={{ display: 'flex', gap: '2px', background: '#1c2030', padding: '2px', borderRadius: '4px', border: '1px solid var(--border)', marginRight: '6px' }}>
-          {[
-            { id: 'chart', label: '📊 Chart' },
-            { id: 'validation', label: '✔️ Validation' },
-            { id: 'research', label: '🔍 Research' },
-            { id: 'diagnostics', label: '⚙️ Diagnostics' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              className={`toolbar-btn ${workspaceTab === tab.id ? 'active' : ''}`}
-              style={{
-                padding: '4px 10px',
-                fontSize: '11px',
-                fontWeight: 600,
-                borderRadius: '3px',
-                cursor: 'pointer',
-                border: 'none',
-                background: workspaceTab === tab.id ? 'var(--accent)' : 'transparent',
-                color: '#fff',
-                transition: 'background 0.2s'
-              }}
-              onClick={() => setWorkspaceTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {/* Workspace segmented control — Chart only in Analysis Mode */}
+        <div className="workspace-segmented">
+          <button
+            className="workspace-segmented-btn active"
+          >
+            Chart
+          </button>
         </div>
 
         <div className="divider" />
 
-        {/* Symbol Select dropdown */}
+        {/* Symbol selector (dark, no native chrome, custom arrow) */}
         <select
           className="symbol-selector"
           value={activeSymbol}
           onChange={(e) => setActiveSymbol(e.target.value)}
+          title="Symbol"
         >
           {symbols.map(sym => (
             <option key={sym} value={sym}>{sym.toUpperCase()}</option>
@@ -2108,8 +2232,8 @@ export default function App() {
 
         <div className="divider" />
 
-        {/* Timeframe aggregation */}
-        <div className="tf-group">
+        {/* Timeframe ribbon (pill group, 11px, 24px height) */}
+        <div className="tf-ribbon">
           {[
             { label: '1m', val: 1 },
             { label: '3m', val: 3 },
@@ -2132,470 +2256,314 @@ export default function App() {
 
         <div className="divider" />
 
-        {/* Chart type selection */}
-        <div className="tf-group">
-          {[
-            { label: 'Candles', val: 'candle' },
-            { label: 'Bars', val: 'bar' },
-            { label: 'Line', val: 'line' }
-          ].map(item => (
-            <button
-              key={item.val}
-              className={`toolbar-btn ${chartType === item.val ? 'active' : ''}`}
-              onClick={() => setChartType(item.val)}
-            >
-              {item.label}
-            </button>
-          ))}
+        {/* Chart type icons (icon-only, 28px square) */}
+        <div className="toolbar-cluster">
+          <button
+            className={`chart-type-btn ${chartType === 'candle' ? 'active' : ''}`}
+            onClick={() => setChartType('candle')}
+            title="Candlestick Chart"
+          >
+            <CandlestickChart size={14} />
+          </button>
+          <button
+            className={`chart-type-btn ${chartType === 'bar' ? 'active' : ''}`}
+            onClick={() => setChartType('bar')}
+            title="Bar Chart"
+          >
+            <BarChart3 size={14} />
+          </button>
+          <button
+            className={`chart-type-btn ${chartType === 'line' ? 'active' : ''}`}
+            onClick={() => setChartType('line')}
+            title="Line Chart"
+          >
+            <LineChart size={14} />
+          </button>
         </div>
 
-        <div className="divider" />
-
-        {/* Layout Select Toggle */}
-        <button
-          className={`toolbar-btn ${layout === 'split' ? 'active' : ''}`}
-          onClick={() => setLayout(l => l === 'single' ? 'split' : 'single')}
-          title="Toggle Split Screen Layout (Dual Timeframe)"
-        >
-          <Layers size={14} style={{ marginRight: '5px' }} />
-          {layout === 'split' ? 'Split Layout' : 'Single Layout'}
-        </button>
-
-        {layout === 'split' && (
-          <>
-            <div className="divider" />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>TF2:</span>
-              <select
-                className="symbol-selector"
-                style={{ padding: '3px 6px', fontSize: '11px', height: '26px', minWidth: '60px' }}
-                value={timeframe2}
-                onChange={(e) => setTimeframe2(Number(e.target.value))}
-              >
-                {[
-                  { label: '1m', val: 1 },
-                  { label: '3m', val: 3 },
-                  { label: '5m', val: 5 },
-                  { label: '15m', val: 15 },
-                  { label: '30m', val: 30 },
-                  { label: '1H', val: 60 },
-                  { label: '4H', val: 240 },
-                  { label: '1D', val: 1440 }
-                ].map(item => (
-                  <option key={item.val} value={item.val}>{item.label}</option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
-
-        <div className="divider" />
-
-        {/* ICT Sessions Toggle */}
-        <button
-          className={`toolbar-btn ${showSessions ? 'active' : ''}`}
-          onClick={() => setShowSessions(!showSessions)}
-          title="Toggle Midnight/8:30 opens & Session highlights"
-        >
-          <Activity size={14} style={{ marginRight: '5px' }} />
-          ICT Sessions
-        </button>
-
-        <div className="divider" />
-
-        {/* Swings Toggle */}
-        <button
-          className={`toolbar-btn ${debugOverlayFilters.swings ? 'active' : ''}`}
-          onClick={() => setDebugOverlayFilters(f => ({ ...f, swings: !f.swings }))}
-          title="Toggle Swing pivot rendering (STH/ITH/LTH & STL/ITL/LTL)"
-        >
-          Swings
-        </button>
-
-        {/* Liquidity Toggle + taken-opacity slider */}
-        <button
-          className={`toolbar-btn ${debugOverlayFilters.liquidity ? 'active' : ''}`}
-          onClick={() => setDebugOverlayFilters(f => ({ ...f, liquidity: !f.liquidity }))}
-          title="Toggle Liquidity line rendering (BSL / SSL)"
-        >
-          Liquidity
-        </button>
-
-        {debugOverlayFilters.liquidity && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '0 6px',
-              borderLeft: '1px solid var(--border)'
-            }}
-            title="Opacity of taken (terminated) liquidity lines"
-          >
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-              Taken
-            </span>
-            <input
-              id="taken-liq-opacity-slider"
-              type="range"
-              min="0.25"
-              max="0.70"
-              step="0.05"
-              value={debugOverlayFilters.takenLiqOpacity ?? 0.25}
-              onChange={e =>
-                setDebugOverlayFilters(f => ({ ...f, takenLiqOpacity: parseFloat(e.target.value) }))
-              }
-              className="opacity-slider"
-            />
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', minWidth: '26px', textAlign: 'right' }}>
-              {Math.round((debugOverlayFilters.takenLiqOpacity ?? 0.25) * 100)}%
-            </span>
-          </div>
-        )}
-
-        {/* Volume Toggle */}
-        <button
-          className={`toolbar-btn ${showVolume ? 'active' : ''}`}
-          onClick={() => setShowVolume(v => !v)}
-          title="Toggle Volume"
-        >
-          <BarChart2 size={14} style={{ marginRight: '5px' }} />
-          Volume
-        </button>
-
-        {/* Replay Toggle */}
-        <button
-          className={`toolbar-btn ${replayMode ? 'active' : ''}`}
-          onClick={() => {
-            if (replayMode) {
-              handleExitReplay();
-            } else {
-              handleStartReplay();
-            }
-          }}
-          title="Toggle Replay Mode"
-        >
-          <History size={14} style={{ marginRight: '5px' }} />
-          Replay
-        </button>
-
-        {/* Undo / Redo */}
-        <button
-          className="toolbar-icon-btn"
-          disabled={undoStack.length === 0}
-          onClick={handleUndo}
-          title="Undo (Ctrl+Z)"
-        >
-          <Undo2 size={14} style={{ opacity: undoStack.length === 0 ? 0.4 : 1 }} />
-        </button>
-        <button
-          className="toolbar-icon-btn"
-          disabled={redoStack.length === 0}
-          onClick={handleRedo}
-          title="Redo (Ctrl+Y)"
-        >
-          <Redo2 size={14} style={{ opacity: redoStack.length === 0 ? 0.4 : 1 }} />
-        </button>
-
-        {/* Settings button on the right */}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px', alignItems: 'center' }}>
+        {/* RIGHT CLUSTER */}
+        <div className="toolbar-cluster-right">
+          {/* Layout toggle (split / single) */}
           <button
-            className={`toolbar-btn ${syncProgress?.status === 'running' ? 'active' : ''}`}
-            style={{
-              padding: '5px 12px',
-              fontSize: '11px',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: syncProgress?.status === 'running' ? 'rgba(0, 82, 255, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-              border: syncProgress?.status === 'running' ? '1px solid rgba(0, 82, 255, 0.4)' : '1px solid var(--border)',
-              color: syncProgress?.status === 'running' ? '#00e5ff' : 'var(--text-bright)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              height: '28px',
-              transition: 'all 0.2s',
-              marginRight: '6px'
+            className={`icon-btn-square ${layout === 'split' ? 'active' : ''}`}
+            onClick={() => setLayout(l => l === 'single' ? 'split' : 'single')}
+            title="Toggle Split Screen Layout (Dual Timeframe)"
+          >
+            {layout === 'split' ? <Square size={14} /> : <LayoutGrid size={14} />}
+          </button>
+
+          {/* TF2 selector (when split layout) */}
+          {layout === 'split' && (
+            <select
+              className="symbol-selector compact"
+              value={timeframe2}
+              onChange={(e) => setTimeframe2(Number(e.target.value))}
+              title="Secondary Timeframe"
+            >
+              {[
+                { label: '1m', val: 1 },
+                { label: '3m', val: 3 },
+                { label: '5m', val: 5 },
+                { label: '15m', val: 15 },
+                { label: '30m', val: 30 },
+                { label: '1H', val: 60 },
+                { label: '4H', val: 240 },
+                { label: '1D', val: 1440 }
+              ].map(item => (
+                <option key={item.val} value={item.val}>{item.label}</option>
+              ))}
+            </select>
+          )}
+
+          {/* ICT Sessions toggle */}
+          <button
+            className={`icon-btn-square ${showSessions ? 'active' : ''}`}
+            onClick={() => setShowSessions(!showSessions)}
+            title="Toggle Midnight/8:30 opens & Session highlights"
+          >
+            <Clock size={14} />
+          </button>
+
+          {/* Swings toggle */}
+          <button
+            className={`icon-btn-square ${debugOverlayFilters.swings ? 'active' : ''}`}
+            onClick={() => setDebugOverlayFilters(f => ({ ...f, swings: !f.swings }))}
+            title="Toggle Swing pivot rendering (STH/ITH/LTH & STL/ITL/LTL)"
+          >
+            <TrendingUp size={14} />
+          </button>
+
+          {/* Liquidity toggle */}
+          <button
+            className={`icon-btn-square ${debugOverlayFilters.liquidity ? 'active' : ''}`}
+            onClick={() => setDebugOverlayFilters(f => ({ ...f, liquidity: !f.liquidity }))}
+            title="Toggle Liquidity line rendering (BSL / SSL)"
+          >
+            <Droplets size={14} />
+          </button>
+
+          {/* Taken-liquidity opacity slider (only when liquidity overlay enabled) */}
+          {debugOverlayFilters.liquidity && (
+            <div className="opacity-group" title="Opacity of taken (terminated) liquidity lines">
+              <span className="opacity-group-label">Taken</span>
+              <input
+                type="range"
+                min="0.25"
+                max="0.70"
+                step="0.05"
+                value={debugOverlayFilters.takenLiqOpacity ?? 0.25}
+                onChange={e =>
+                  setDebugOverlayFilters(f => ({ ...f, takenLiqOpacity: parseFloat(e.target.value) }))
+                }
+                className="opacity-slider"
+              />
+              <span className="opacity-group-value">
+                {Math.round((debugOverlayFilters.takenLiqOpacity ?? 0.25) * 100)}%
+              </span>
+            </div>
+          )}
+
+          {/* Volume toggle */}
+          <button
+            className={`icon-btn-square ${showVolume ? 'active' : ''}`}
+            onClick={() => setShowVolume(v => !v)}
+            title="Toggle Volume"
+          >
+            <BarChart2 size={14} />
+          </button>
+
+
+          {/* Replay toggle */}
+          <button
+            className={`icon-btn-square ${replayMode ? 'active' : ''}`}
+            onClick={() => {
+              if (replayMode) {
+                handleExitReplay();
+              } else {
+                handleStartReplay();
+              }
             }}
-            onClick={handleTriggerSync}
-            disabled={syncProgress?.status === 'running'}
-            title="Trigger manual database sync for current symbol"
+            title="Toggle Replay Mode"
           >
-            <RefreshCw size={12} className={syncProgress?.status === 'running' ? 'spin' : ''} />
-            {syncProgress?.status === 'running' ? 'Syncing...' : 'Sync Data'}
+            <History size={14} />
           </button>
-          <button 
-            className="toolbar-icon-btn" 
-            onClick={() => setIsDarkMode(v => !v)} 
-            title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+
+          {/* Undo / Redo */}
+          <button
+            className="icon-btn-square"
+            disabled={undoStack.length === 0}
+            onClick={handleUndo}
+            title="Undo (Ctrl+Z)"
           >
-            {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
+            <Undo2 size={14} />
           </button>
+          <button
+            className="icon-btn-square"
+            disabled={redoStack.length === 0}
+            onClick={handleRedo}
+            title="Redo (Ctrl+Y)"
+          >
+            <Redo2 size={14} />
+          </button>
+
+          {/* View mode segmented (Narrative / Analysis / Debug) */}
+          <div className="viewmode-segmented">
+            <button
+              className={`viewmode-btn ${viewMode === 'narrative' ? 'active' : ''}`}
+              onClick={() => {
+                setViewMode('narrative');
+                setNarrativeMode(true);
+                setShowAlgoZones(true);
+              }}
+              title="Narrative view mode"
+            >
+              Narrative
+            </button>
+            <button
+              className={`viewmode-btn ${viewMode === 'analysis' ? 'active' : ''}`}
+              onClick={() => {
+                setViewMode('analysis');
+                setNarrativeMode(false);
+                setShowAlgoZones(true);
+              }}
+              title="Analysis view mode"
+            >
+              Analysis
+            </button>
+            <button
+              className={`viewmode-btn debug ${viewMode === 'debug' ? 'active' : ''}`}
+              onClick={() => {
+                setViewMode('debug');
+                setNarrativeMode(false);
+                setShowAlgoZones(true);
+              }}
+              title="Debug view mode"
+            >
+              Debug
+            </button>
+          </div>
+
+          {/* Layers dropdown */}
+          <div className="layers-wrap">
+            <button
+              className="layers-btn"
+              onClick={() => setIsLayersDropdownOpen(!isLayersDropdownOpen)}
+              title="Toggle analysis layer visibility"
+            >
+              <span>Layers</span>
+              <ChevronDown size={10} />
+            </button>
+            {isLayersDropdownOpen && (
+              <div className="layers-menu">
+                {[
+                  { key: 'swings', label: 'Swings' },
+                  { key: 'liquidity', label: 'Liquidity' },
+                  { key: 'structure', label: 'Structure' },
+                  { key: 'dealingRanges', label: 'Dealing Ranges' },
+                  { key: 'showHistoricalRanges', label: 'Show Historical Ranges' },
+                  { key: 'intent', label: 'Intent' },
+                  { key: 'delivery', label: 'Delivery' }
+                ].map(item => (
+                  <label key={item.key}>
+                    <input
+                      type="checkbox"
+                      checked={analysisLayers[item.key]}
+                      onChange={(e) => {
+                        handleLayerToggle(item.key, e.target.checked);
+                      }}
+                    />
+                    {item.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Zones toggle (only when a concept is selected) */}
           {selectedConcept && (
             <button
               className={`toolbar-btn ${showAlgoZones ? 'active' : ''}`}
-              style={{ padding: '5px 12px', fontSize: '12px', fontWeight: 600, marginRight: '4px' }}
               onClick={() => setShowAlgoZones(v => !v)}
               title="Toggle Auto-detected Candidate Zones on Chart"
             >
               Zones
             </button>
           )}
+
+          {/* Liquidity display mode select (only when liquidity concept is selected) */}
           {selectedConcept && selectedConcept.startsWith('liquidity') && (
             <select
-              className="symbol-selector"
-              style={{ padding: '5px 8px', fontSize: '12px', height: '28px', minWidth: '140px', marginRight: '6px' }}
+              className="symbol-selector compact"
               value={displayMode}
               onChange={(e) => setDisplayMode(e.target.value)}
               title="Liquidity Display Mode"
             >
-              <option value="default">Default Mode</option>
-              <option value="consolidated">Consolidated Only</option>
-              <option value="research">Research Mode (All)</option>
+              <option value="default">Default</option>
+              <option value="consolidated">Consolidated</option>
+              <option value="research">Research</option>
             </select>
           )}
-          <div className="segmented-control" style={{ display: 'flex', background: '#1c2030', border: '1px solid #2a2e39', borderRadius: '4px', padding: '2px', marginRight: '6px', height: '28px', boxSizing: 'border-box' }}>
-            <button
-              className={`segmented-btn ${viewMode === 'narrative' ? 'active' : ''}`}
-              style={{
-                background: viewMode === 'narrative' ? 'var(--accent)' : 'none',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '0 10px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                height: '100%',
-                transition: 'background 0.2s'
-              }}
-              onClick={() => {
-                setViewMode('narrative');
-                setNarrativeMode(true);
-                setShowAlgoZones(true);
-              }}
-            >
-              Narrative
-            </button>
-            <button
-              className={`segmented-btn ${viewMode === 'analysis' ? 'active' : ''}`}
-              style={{
-                background: viewMode === 'analysis' ? 'var(--accent)' : 'none',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '0 10px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                height: '100%',
-                transition: 'background 0.2s'
-              }}
-              onClick={() => {
-                setViewMode('analysis');
-                setNarrativeMode(false);
-                setShowAlgoZones(true);
-              }}
-            >
-              Analysis
-            </button>
-            <button
-              className={`segmented-btn ${viewMode === 'debug' ? 'active' : ''}`}
-              style={{
-                background: viewMode === 'debug' ? '#ff9100' : 'none',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: '11px',
-                fontWeight: 600,
-                padding: '0 10px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                height: '100%',
-                transition: 'background 0.2s'
-              }}
-              onClick={() => {
-                setViewMode('debug');
-                setNarrativeMode(false);
-                setShowAlgoZones(true);
-              }}
-            >
-              Debug
-            </button>
-          </div>
 
-          {viewMode === 'analysis' && (
-            <div style={{ position: 'relative', marginRight: '6px' }}>
-              <button
-                className="toolbar-btn"
-                style={{
-                  height: '28px',
-                  padding: '0 10px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  background: '#1c2030',
-                  border: '1px solid #2a2e39',
-                  color: '#ffb74d',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-                onClick={() => setIsLayersDropdownOpen(!isLayersDropdownOpen)}
-              >
-                <span>Layers</span>
-                <span style={{ fontSize: '9px' }}>{isLayersDropdownOpen ? '▲' : '▼'}</span>
-              </button>
-              
-              {isLayersDropdownOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '32px',
-                    right: 0,
-                    background: '#0f1115',
-                    border: '1px solid #2a2e39',
-                    borderRadius: '4px',
-                    boxShadow: '0 6px 16px rgba(0,0,0,0.85)',
-                    zIndex: 1010,
-                    padding: '10px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                    minWidth: '140px'
-                  }}
-                >
-                  {[
-                    { key: 'swings', label: 'Swings' },
-                    { key: 'liquidity', label: 'Liquidity' },
-                    { key: 'structure', label: 'Structure' },
-                    { key: 'dealingRanges', label: 'Dealing Ranges' },
-                    { key: 'intent', label: 'Intent' },
-                    { key: 'delivery', label: 'Delivery' }
-                  ].map(item => (
-                    <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: '#b2b5be', cursor: 'pointer', userSelect: 'none' }}>
-                      <input
-                        type="checkbox"
-                        checked={analysisLayers[item.key]}
-                        onChange={(e) => {
-                          setAnalysisLayers(prev => ({
-                            ...prev,
-                            [item.key]: e.target.checked
-                          }));
-                        }}
-                        style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
-                      />
-                      {item.label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {/* RESEARCH MODE CONTROLS */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRight: '1px solid rgba(255,255,255,0.08)', paddingRight: '10px', marginRight: '6px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Dataset:</span>
+          {/* Sync Data button */}
+          <button
+            className={`sync-btn ${syncProgress?.status === 'running' ? 'running' : ''}`}
+            onClick={handleTriggerSync}
+            disabled={syncProgress?.status === 'running'}
+            title="Trigger manual database sync for current symbol"
+          >
+            <RefreshCw size={12} className={syncProgress?.status === 'running' ? 'spin' : ''} />
+            {syncProgress?.status === 'running' ? 'Syncing' : 'Sync'}
+          </button>
+
+          {/* Bar history limit selector */}
+          <div className="dataset-group">
+            <span className="dataset-label">Bars</span>
             <select
-              value={activeResearchMode}
+              className="symbol-selector compact"
+              value={limitBarsInteractive}
               onChange={(e) => {
-                const val = e.target.value;
-                setActiveResearchMode(val);
+                const val = parseInt(e.target.value, 10);
+                setLimitBarsInteractive(val);
                 slidingWindowCache1.clear();
                 slidingWindowCache2.clear();
               }}
-              style={{
-                background: '#131722',
-                border: '1px solid #2a2e39',
-                color: '#fff',
-                fontSize: '11px',
-                padding: '4px 6px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                outline: 'none'
-              }}
+              title="Bar history limit"
             >
-              <option value="interactive">Interactive Mode</option>
-              <option value="batch">Batch Research Mode</option>
+              <option value={20000}>2W</option>
+              <option value={40000}>1M</option>
+              <option value={80000}>3M</option>
+              <option value={120000}>4M</option>
+              <option value={0}>Full</option>
             </select>
-
-            {activeResearchMode === 'interactive' && (
-              <select
-                value={limitBarsInteractive}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  setLimitBarsInteractive(val);
-                  slidingWindowCache1.clear();
-                  slidingWindowCache2.clear();
-                }}
-                style={{
-                  background: '#131722',
-                  border: '1px solid #2a2e39',
-                  color: '#fff',
-                  fontSize: '11px',
-                  padding: '4px 6px',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  outline: 'none'
-                }}
-              >
-                <option value={20000}>2 Weeks (20k bars)</option>
-                <option value={40000}>1 Month (40k bars)</option>
-                <option value={120000}>3 Months (120k bars)</option>
-                <option value={80000}>Custom (80k bars)</option>
-              </select>
-            )}
-
-            <button
-              onClick={async () => {
-                try {
-                  const limit = activeResearchMode === 'interactive' ? limitBarsInteractive : '';
-                  const url = `http://localhost:8080/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limit}`;
-                  
-                  setSyncProgress({
-                    status: 'processing',
-                    current_chunk: 0,
-                    total_chunks: 0,
-                    bars_processed: 0,
-                    elapsed_ms: 0,
-                    eta_ms: 0
-                  });
-                  setIsProgressOverlayVisible(true);
-
-                  const res = await fetch(url);
-                  const data = await res.json();
-                  console.log("Trigger sync response:", data);
-                } catch (e) {
-                  console.error(e);
-                }
-              }}
-              style={{
-                background: 'var(--accent)',
-                color: '#000',
-                border: 'none',
-                padding: '4px 8px',
-                borderRadius: '4px',
-                fontSize: '11px',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              Sync Run
-            </button>
           </div>
 
-          <button className="toolbar-icon-btn" onClick={() => setIsSettingsOpen(true)} title="Chart Settings">
+          {/* Theme toggle */}
+          <button
+            className="icon-btn-square"
+            onClick={() => setIsDarkMode(v => !v)}
+            title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+
+          {/* Settings */}
+          <button
+            className="icon-btn-square"
+            onClick={() => setIsSettingsOpen(true)}
+            title="Chart Settings"
+          >
             <Settings size={14} />
           </button>
-          <button className="btn-primary" style={{ padding: '6px 14px', fontSize: '12px' }}>
-            Publish
-          </button>
+
+          {/* Publish (decorative accent button) */}
+          <button className="publish-btn">Publish</button>
         </div>
       </header>
 
       {/* MAIN CONTAINER */}
-      <div className="main-content" style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
-        <div style={{ display: workspaceTab === 'chart' ? 'flex' : 'none', flex: 1, height: '100%', width: '100%', overflow: 'hidden' }}>
-            {/* LEFT DRAWING SIDEBAR */}
+      <div className="main-content">
+        <div className="chart-workspace" style={{ display: workspaceTab === 'chart' ? 'flex' : 'none' }}>
+            {/* LEFT DRAWING RAIL (48px icon column, tooltips on hover) */}
             <aside className="drawing-sidebar">
               <button
                 className={`sidebar-btn ${activeTool === null ? 'active' : ''}`}
@@ -2637,6 +2605,8 @@ export default function App() {
                 <Layers size={16} />
               </button>
 
+              <div className="rail-divider" />
+
               <button
                 className={`sidebar-btn ${activeTool === 'text' ? 'active' : ''}`}
                 onClick={() => setActiveTool('text')}
@@ -2666,7 +2636,7 @@ export default function App() {
                 onClick={() => setActiveTool('position-long')}
                 data-tooltip="Long Position"
               >
-                <TrendingUp size={16} style={{ color: '#089981' }} />
+                <TrendingUp size={16} className="position-long-icon" />
               </button>
 
               <button
@@ -2674,7 +2644,7 @@ export default function App() {
                 onClick={() => setActiveTool('position-short')}
                 data-tooltip="Short Position"
               >
-                <TrendingDown size={16} style={{ color: '#f23645' }} />
+                <TrendingDown size={16} className="position-short-icon" />
               </button>
 
               <button
@@ -2685,7 +2655,7 @@ export default function App() {
                 <Compass size={16} />
               </button>
 
-              <div className="divider" style={{ width: '20px', height: '1px', margin: '6px 0' }} />
+              <div className="rail-divider" />
 
               {/* Magnet toggle */}
               <button
@@ -2693,7 +2663,7 @@ export default function App() {
                 onClick={() => setMagnetMode(!magnetMode)}
                 data-tooltip={magnetMode ? "Disable Magnet Mode" : "Enable Magnet Mode (Snaps to High/Low)"}
               >
-                <Magnet size={16} style={{ color: magnetMode ? '#00e5ff' : 'inherit' }} />
+                <Magnet size={16} />
               </button>
 
               {/* Lock all toggle */}
@@ -2702,7 +2672,7 @@ export default function App() {
                 onClick={() => setLockDrawings(!lockDrawings)}
                 data-tooltip={lockDrawings ? "Unlock all drawings" : "Lock all drawings"}
               >
-                {lockDrawings ? <Lock size={16} style={{ color: '#ff9100' }} /> : <Unlock size={16} />}
+                {lockDrawings ? <Lock size={16} /> : <Unlock size={16} />}
               </button>
 
               {/* Hide/Show drawings */}
@@ -2723,6 +2693,45 @@ export default function App() {
                 <Trash2 size={16} />
               </button>
             </aside>
+
+            {dealingRangeCalc.active && (
+              <div className="dealing-range-loader-overlay">
+                <div className="dealing-range-loader-card">
+                  <div className="loader-card-header">
+                    <span className="loader-icon">⚡</span>
+                    <h3>Calculating Dealing Ranges...</h3>
+                  </div>
+                  <div className="loader-card-body">
+                    <div className="progress-bar-container">
+                      <div
+                        className="progress-bar-fill"
+                        style={{ width: `${dealingRangeCalc.progress}%` }}
+                      ></div>
+                    </div>
+                    <div className="time-metrics">
+                      <div>
+                        <span className="metric-label">Elapsed: </span>
+                        <span className="metric-value">{dealingRangeCalc.elapsed.toFixed(2)}s</span>
+                      </div>
+                      <div>
+                        <span className="metric-label">Estimated: </span>
+                        <span className="metric-value">{dealingRangeCalc.estimated.toFixed(2)}s remaining</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="chart-floating-actions">
+              <button
+                className="floating-btn"
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                title={isFullscreen ? "Exit Full Screen (Esc)" : "Full Screen"}
+              >
+                {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+              </button>
+            </div>
 
             <ChartViewport 
               containerRef={containerRef}
@@ -2842,41 +2851,13 @@ export default function App() {
             />
           </div>
 
-        {workspaceTab === 'validation' && (
-          <ValidationWorkspace
-            activeSymbol={activeSymbol}
-            onSelectEvent={(ev) => {
-              setSelectedAlgoCandidate(ev);
-              setWorkspaceTab('chart');
-              setRightSidebarTab('market');
-            }}
-            onJumpToTime={handleJumpToTime}
-            onSwitchTab={setWorkspaceTab}
-          />
-        )}
+          </div>
 
-        {workspaceTab === 'research' && (
-          <ResearchWorkspace
-            activeSymbol={activeSymbol}
-            onSelectEvent={(ev) => {
-              setSelectedAlgoCandidate(ev);
-              setWorkspaceTab('chart');
-              setRightSidebarTab('market');
-            }}
-            onJumpToTime={handleJumpToTime}
-            onSwitchTab={setWorkspaceTab}
-          />
-        )}
-
-        {workspaceTab === 'diagnostics' && (
-          <DiagnosticsWorkspace activeSymbol={activeSymbol} />
-        )}
-      </div>
-
-      {/* BOTTOM STATUS BAR */}
+      {/* BOTTOM STATUS BAR (24px tall) */}
       <footer className="bottom-bar">
+        {/* LEFT: time-scale quick-zoom + connection + symbol + timeframe */}
         <div className="bottom-left-group">
-          <span>Time Scale:</span>
+          <span className="bottom-tf-label">Range</span>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(1)}>1D</button>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(5)}>5D</button>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(30)}>1M</button>
@@ -2884,13 +2865,50 @@ export default function App() {
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(180)}>6M</button>
           <button className="bottom-tf-btn" onClick={() => handleBottomTimeScale(365)}>1Y</button>
           <button className="bottom-tf-btn" onClick={() => chartRef.current?.timeScale().fitContent()}>All</button>
-        </div>
-        <div className="bottom-right-group">
-          <span>Timezone: America/New_York (EST)</span>
+          <span className="status-divider" />
           <div className="status-indicator">
             <span className="status-dot" />
-            <span>Local Database Connected</span>
+            <span>Connected</span>
           </div>
+          <span className="status-divider" />
+          <span className="status-label">Sym</span>
+          <span className="status-value">{activeSymbol ? activeSymbol.replace('_HISTORICAL_DATA', '').replace('_', ' ').toUpperCase() : '—'}</span>
+          <span className="status-divider" />
+          <span className="status-label">TF</span>
+          <span className="status-value">{tfLabel}</span>
+        </div>
+
+        {/* CENTER: last price + change (last close vs prev close) */}
+        <div className="bottom-center-group">
+          {lastPrice !== null ? (
+            <>
+              <span className="status-label">Last</span>
+              <span className="status-mono">{lastPrice.toFixed(2)}</span>
+              {priceChange !== null && (
+                <span className={`status-value ${priceChange >= 0 ? 'up' : 'dn'}`}>
+                  {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}
+                </span>
+              )}
+              {priceChangePct !== null && (
+                <span className={`status-value ${priceChangePct >= 0 ? 'up' : 'dn'}`}>
+                  ({priceChangePct >= 0 ? '+' : ''}{priceChangePct.toFixed(2)}%)
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="status-label">No data</span>
+          )}
+        </div>
+
+        {/* RIGHT: Session info */}
+        <div className="bottom-right-group">
+          <>
+            <span className="status-label">Session</span>
+            <span className="status-value">{sessionLabel}</span>
+            <span className="status-divider" />
+            <span className="status-label">TZ</span>
+            <span className="status-value">America/New_York</span>
+          </>
         </div>
       </footer>
 
@@ -2953,7 +2971,19 @@ export default function App() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
                 <span>Bars Processed:</span>
-                <strong style={{ color: '#fff' }}>{syncProgress.bars_processed?.toLocaleString() || 'Processing...'}</strong>
+                <strong style={{ color: '#fff' }}>
+                  {syncProgress.bars_processed !== undefined && syncProgress.bars_processed !== null
+                    ? syncProgress.bars_processed.toLocaleString()
+                    : 'Processing...'}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                <span>Time Elapsed:</span>
+                <strong style={{ color: '#fff' }}>
+                  {syncProgress.elapsed_ms > 0
+                    ? `${Math.round(syncProgress.elapsed_ms / 1000)} seconds`
+                    : '0 seconds'}
+                </strong>
               </div>
               {syncProgress.total_chunks > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
@@ -2987,6 +3017,30 @@ export default function App() {
                 }} />
               </div>
             )}
+
+            <button
+              onClick={() => {
+                userDismissedSyncRef.current = true;
+                setIsProgressOverlayVisible(false);
+                setSyncProgress(null);
+              }}
+              style={{
+                marginTop: '10px',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                color: '#fff',
+                fontWeight: 600,
+                cursor: 'pointer',
+                textAlign: 'center',
+                transition: 'background 0.2s',
+              }}
+              onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.15)'}
+              onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.08)'}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

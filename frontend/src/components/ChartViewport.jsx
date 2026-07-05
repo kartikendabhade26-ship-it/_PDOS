@@ -4,7 +4,6 @@ import DrawingCanvas from './DrawingCanvas';
 import FloatingToolbar from './FloatingToolbar';
 import DrawingSettingsModal from './DrawingSettingsModal';
 import ReplayControls from './ReplayControls';
-import CandidateExplorer from './CandidateExplorer';
 
 export default function ChartViewport({
   // Container Refs
@@ -326,6 +325,8 @@ export default function ChartViewport({
               narrativeMode={narrativeMode}
               narrativeFocusRangeId={narrativeFocusRangeId}
               setNarrativeFocusRangeId={setNarrativeFocusRangeId}
+              viewMode={viewMode}
+              analysisLayers={analysisLayers}
               debugOverlayFilters={debugOverlayFilters}
               debugMode={debugMode}
               onRenderCompleted={onChart1Ready}
@@ -590,12 +591,6 @@ export default function ChartViewport({
         onAddUndoState={handleAddUndoState}
       />
 
-      {/* Candidate Explorer Card */}
-      <CandidateExplorer 
-        selectedAlgoCandidate={selectedAlgoCandidate}
-        setSelectedAlgoCandidate={setSelectedAlgoCandidate}
-        onSaveValidation={saveExplorerLabel}
-      />
 
       {/* HUD OHLC BAR */}
       {hudBar && chartSettings.showOhlc && (
@@ -615,23 +610,32 @@ export default function ChartViewport({
         </div>
       )}
 
-      {/* HUD SESSIONS LIST */}
-      {showSessions && allBars.length > 0 && (
-        <div className="sessions-list-indicator">
-          <div className="session-indicator-badge">
-            <span className="session-dot" style={{ backgroundColor: '#26a69a' }} />
-            <span>London Session (2-5 AM EST)</span>
+      {/* HUD SESSIONS LIST — compact, top-right, active session highlighted */}
+      {showSessions && allBars.length > 0 && (() => {
+        const nowMin = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
+        const estOffset = -5 * 60; // EST is UTC-5
+        const estMin = (nowMin + estOffset + 1440) % 1440;
+        const isActive = (start, end) => estMin >= start && estMin < end;
+        const londonActive = isActive(2 * 60, 5 * 60);
+        const nyAmActive = isActive(8 * 60 + 30, 12 * 60);
+        const nyPmActive = isActive(13 * 60 + 30, 16 * 60);
+        return (
+          <div className="sessions-list-indicator">
+            <div className={`session-indicator-badge ${londonActive ? 'active' : ''}`}>
+              <span className="session-dot" style={{ backgroundColor: '#26a69a' }} />
+              <span>London</span>
+            </div>
+            <div className={`session-indicator-badge ${nyAmActive ? 'active' : ''}`}>
+              <span className="session-dot" style={{ backgroundColor: '#2962ff' }} />
+              <span>NY AM</span>
+            </div>
+            <div className={`session-indicator-badge ${nyPmActive ? 'active' : ''}`}>
+              <span className="session-dot" style={{ backgroundColor: '#aa00ff' }} />
+              <span>NY PM</span>
+            </div>
           </div>
-          <div className="session-indicator-badge">
-            <span className="session-dot" style={{ backgroundColor: '#2962ff' }} />
-            <span>NY AM Killzone (8:30-12 AM EST)</span>
-          </div>
-          <div className="session-indicator-badge">
-            <span className="session-dot" style={{ backgroundColor: '#aa00ff' }} />
-            <span>NY PM Session (1:30-4 PM EST)</span>
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </main>
   );
 }

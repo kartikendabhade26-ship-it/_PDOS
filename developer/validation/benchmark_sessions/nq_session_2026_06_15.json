@@ -1,0 +1,17 @@
+{
+  "session_date": "2026-06-15",
+  "symbol": "NQ_Historical_Data",
+  "timeframe": 1,
+  "expected_events": {
+    "swings": [
+      { "id": "swing_bearish_1736237040_tf1", "time": 1736237040, "direction": "bearish", "price": 22895.25 },
+      { "id": "swing_bullish_1736237460_tf1", "time": 1736237460, "direction": "bullish", "price": 22878.75 }
+    ],
+    "liquidity_pools": [
+      { "id": "liquidity_ssl_1736779620_tf1", "level_price": 21814.75, "direction": "ssl" }
+    ],
+    "dealing_ranges": [
+      { "direction": "premium", "priceHigh": 22866.75, "priceLow": 22859.375 }
+    ]
+  }
+}

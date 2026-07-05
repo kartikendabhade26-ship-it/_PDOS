@@ -70,7 +70,15 @@ class QueryEngine {
 
         if (latestEvent && latestEvent.latest) {
           actualEnd = latestEvent.latest + timeframe * 60 * 200; // padding
-          actualStart = Math.max(1, actualEnd - timeframe * 60 * limit);
+
+          // Use direct SQLite LIMIT to fetch exactly the latest limit bars ending at actualEnd
+          const rows = db.prepare(`
+            SELECT time_epoch as time, open, high, low, close, volume
+            FROM market_bars
+            WHERE symbol = ? COLLATE NOCASE AND timeframe = ? AND time_epoch <= ?
+            ORDER BY time_epoch DESC LIMIT ?
+          `).all(symbol, timeframe, actualEnd, limit);
+          return rows.reverse();
         }
       } catch (e) {
         // Fallback to defaults
@@ -87,7 +95,34 @@ class QueryEngine {
     const dbName = process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db';
     const runId = this.resolveRunId(runIdOrDbName);
     
-    const rows = RegistryService.getEvents(dbName, runId, symbol, timeframe, start, end, limit);
+    let rows = RegistryService.getEvents(dbName, runId, symbol, timeframe, start, end, limit);
+
+    // Also include dealing ranges from higher timeframes
+    try {
+      const { getDB } = require('./db');
+      const db = getDB(dbName);
+      const higherRanges = db.prepare(`
+        SELECT e.event_id, e.root_event_id, e.parent_event_id, e.detector_id,
+               e.symbol, e.timeframe, e.concept_family, e.concept_type, e.concept_state,
+               e.time_start, e.time_end, e.price_high, e.price_low, e.direction, e.properties
+        FROM structure_events e
+        WHERE e.run_id = ? AND e.symbol = ? COLLATE NOCASE AND e.concept_type = 'Dealing Range' AND e.timeframe > ? AND e.time_start >= ? AND e.time_start <= ?
+        ORDER BY e.time_start ASC LIMIT ?
+      `).all(runId, symbol, timeframe, start, end, limit);
+
+      if (higherRanges && higherRanges.length > 0) {
+        rows = [...rows, ...higherRanges];
+        const seen = new Set();
+        rows = rows.filter(r => {
+          if (seen.has(r.event_id)) return false;
+          seen.add(r.event_id);
+          return true;
+        });
+      }
+    } catch (e) {
+      // Fallback
+    }
+
     return rows.map(r => {
       let properties = {};
       if (r.properties) {
@@ -189,18 +224,18 @@ class QueryEngine {
 
 
         if (latestEvent && latestEvent.latest) {
-          // Show 1500 candles ending at (or just after) the latest event.
+          // Show limit candles ending at (or just after) the latest event.
           // Pass start=1 (not 0) so getCandles uses the time-range path and respects the end cutoff.
           actualEnd = latestEvent.latest + timeframe * 60 * 200;
-          const candles = this.getCandles(runIdOrDbName, symbol, timeframe, 1, actualEnd, 1500);
+          const candles = this.getCandles(runIdOrDbName, symbol, timeframe, 1, actualEnd, limit);
           if (candles.length > 0) {
             actualStart = candles[0].time;
             actualEnd = candles[candles.length - 1].time;
           }
 
         } else {
-          // No events — fall back to last 1500 candles
-          const candles = this.getCandles(runIdOrDbName, symbol, timeframe, 0, 0, 1500);
+          // No events — fall back to last limit candles
+          const candles = this.getCandles(runIdOrDbName, symbol, timeframe, 0, 0, limit);
           if (candles.length > 0) {
             actualStart = candles[0].time;
             actualEnd = candles[candles.length - 1].time;
@@ -210,8 +245,8 @@ class QueryEngine {
           }
         }
       } catch (e) {
-        // Fallback to last 1500 candles if anything errors
-        const candles = this.getCandles(runIdOrDbName, symbol, timeframe, 0, 0, 1500);
+        // Fallback to last limit candles if anything errors
+        const candles = this.getCandles(runIdOrDbName, symbol, timeframe, 0, 0, limit);
         if (candles.length > 0) {
           actualStart = candles[0].time;
           actualEnd = candles[candles.length - 1].time;

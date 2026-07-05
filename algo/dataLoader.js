@@ -3,10 +3,14 @@ const path = require('path');
 const readline = require('readline');
 const { getESTOffset } = require('./utils/math/time');
 
+// Cross-platform data directory resolution.
+// Priority: PDOS_DATA_DIR env var → repo-local ./data folder → legacy Windows paths.
 const SCAN_DIRS = [
+  process.env.PDOS_DATA_DIR,
+  path.join(__dirname, '..', 'data'),
   "D:\\nijna data\\Project 1 MNQ data",
   "D:\\nijna data"
-];
+].filter(Boolean);
 
 // In-memory cache for parsed 1m bars
 const cache = new Map();
@@ -254,10 +258,17 @@ async function _parseCsvFileInner(filePath, forceFull = false, limitBars = null)
       console.log(`[parseCsvFile] Finished reading ${lineCount} lines. Sorting ${bars.length} bars...`);
       // Sort bars chronologically
       bars.sort((a, b) => a.time - b.time);
+
+      let finalBars = bars;
+      if (!forceFull && limitBars && bars.length > limitBars) {
+        finalBars = bars.slice(-limitBars);
+        console.log(`[parseCsvFile] Sliced to exactly the last ${limitBars} bars.`);
+      }
+
       console.log(`[parseCsvFile] Sorting complete. Precomputing daily highs/lows...`);
-      precomputeDailyHighLows(bars);
+      precomputeDailyHighLows(finalBars);
       console.log(`[parseCsvFile] Precomputation complete. Resolving bars...`);
-      resolve(bars);
+      resolve(finalBars);
     });
 
     rl.on('error', (err) => {

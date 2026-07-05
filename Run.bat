@@ -5,9 +5,20 @@ echo   Nasdaq Trading Terminal - Quick Starter
 echo ===================================================
 echo.
 
-:: Start the Node.js backend server on port 8080
-echo [1/3] Starting backend server (Node.js) on port 8080...
-start /b cmd /c "node server.js"
+:: Kill any existing processes running on port 3000 or 5173
+echo [0/3] Terminating any existing processes on ports 3000 and 5173...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3000') do taskkill /f /pid %%a 2>nul
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :5173') do taskkill /f /pid %%a 2>nul
+timeout /t 1 /nobreak >nul
+
+:: Set optimal environment variables for 8GB RAM system
+set PORT=3000
+set PDOS_MAX_BARS=500000
+set PDOS_BACKEND_URL=http://localhost:3000
+
+:: Start the Node.js backend server on port 3000 with 3GB RAM allocation limit
+echo [1/3] Starting backend server (Node.js) on port 3000...
+start /b cmd /c "node --max-old-space-size=3072 server.js"
 
 :: Wait 2 seconds for backend initialization
 timeout /t 2 /nobreak >nul

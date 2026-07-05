@@ -6,10 +6,17 @@
 
 const { getDB } = require('./db');
 const RegistryService = require('./RegistryService');
-const manifest = require('./EngineManifest');
 const { parseCsvFile } = require('./dataLoader');
 const { syncSymbolPipeline } = require('./pipeline');
 const logger = require('./logger');
+const algoConfig = require('./config');
+
+function getAnalysisBars(symbol) {
+  if (algoConfig.symbols && algoConfig.symbols[symbol] && typeof algoConfig.symbols[symbol].analysisBars === 'number') {
+    return algoConfig.symbols[symbol].analysisBars;
+  }
+  return algoConfig.analysisBars || 15000;
+}
 
 class ResearchEngine {
   /**
@@ -32,7 +39,7 @@ class ResearchEngine {
       symbol,
       'running',
       JSON.stringify(config),
-      JSON.stringify(manifest)
+      JSON.stringify({})
     );
 
     // Capture execution logs inline
@@ -58,8 +65,9 @@ class ResearchEngine {
       }
 
       logger.info('RESEARCH_ENGINE', `Loading historical bars dataset: ${filePath}`);
-      const limitBars = config.limitBars || null;
-      const rawBars = await parseCsvFile(filePath, false, limitBars);
+      const limitBars = (config.limitBars !== undefined && config.limitBars !== null) ? config.limitBars : (config.mode === 'interactive' ? getAnalysisBars(symbol) : null);
+      const forceFull = config.mode === 'batch' || !limitBars;
+      const rawBars = await parseCsvFile(filePath, forceFull, limitBars);
       logger.info('RESEARCH_ENGINE', `Loaded ${rawBars.length} total bars. Invoking execution pipeline...`);
 
       // 2. Run execution pipeline

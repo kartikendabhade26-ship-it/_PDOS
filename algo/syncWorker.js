@@ -1,47 +1,43 @@
 const { parentPort, workerData } = require('worker_threads');
-const JobManager = require('./ResearchJobManager');
+const { syncSymbolPipeline } = require('./pipeline');
+const { parseCsvFile } = require('./dataLoader');
+const algoConfig = require('./config');
 const logger = require('./logger');
 
+function getAnalysisBars(symbol) {
+  if (algoConfig.symbols && algoConfig.symbols[symbol] && typeof algoConfig.symbols[symbol].analysisBars === 'number') {
+    return algoConfig.symbols[symbol].analysisBars;
+  }
+  return algoConfig.analysisBars || 15000;
+}
+
 async function run() {
-  const { symbol } = workerData;
-  logger.info('WORKER', `Legacy syncWorker adapter started for symbol: ${symbol}`);
+  const { symbol, filePath, mode, limitBars, resume } = workerData;
+  logger.info('WORKER', `Direct sync worker started for symbol: ${symbol}`);
 
   try {
-    const jobId = JobManager.addJob({
-      workspaceId: 'development',
-      symbol,
-      taskType: 'research_run',
-      config: {
-        limitBars: workerData.limitBars || null,
-        mode: workerData.mode || 'interactive',
-        resume: !!workerData.resume
-      },
-      priority: 10
+    const finalLimitBars = (limitBars !== undefined && limitBars !== null) ? limitBars : (mode === 'interactive' ? getAnalysisBars(symbol) : null);
+    const forceFull = mode === 'batch' || !finalLimitBars;
+
+    logger.info('WORKER', `Loading historical bars dataset: ${filePath} (limitBars: ${finalLimitBars}, forceFull: ${forceFull})`);
+    const rawBars = await parseCsvFile(filePath, forceFull, finalLimitBars);
+    logger.info('WORKER', `Loaded ${rawBars.length} total bars. Invoking execution pipeline...`);
+
+    const runId = 'sync_' + Date.now();
+    await syncSymbolPipeline(symbol, rawBars, runId, null, (progressPct, stageCounts) => {
+      parentPort.postMessage({ type: 'progress', progressPct, results: stageCounts });
     });
 
-    const onCompleted = ({ jobId: finishedId }) => {
-      if (finishedId === jobId) {
-        cleanup();
-        parentPort.postMessage({ success: true, symbol });
-      }
-    };
+    const { closeAllDBs } = require('./db');
+    closeAllDBs();
 
-    const onFailed = ({ jobId: finishedId, error }) => {
-      if (finishedId === jobId) {
-        cleanup();
-        parentPort.postMessage({ success: false, symbol, error });
-      }
-    };
-
-    const cleanup = () => {
-      JobManager.removeListener('job_completed', onCompleted);
-      JobManager.removeListener('job_failed', onFailed);
-    };
-
-    JobManager.on('job_completed', onCompleted);
-    JobManager.on('job_failed', onFailed);
+    parentPort.postMessage({ success: true, symbol });
   } catch (err) {
-    logger.error('WORKER', `Legacy syncWorker adapter failed.`, err);
+    try {
+      const { closeAllDBs } = require('./db');
+      closeAllDBs();
+    } catch (e) {}
+    logger.error('WORKER', `Direct sync worker execution failed`, err);
     parentPort.postMessage({ success: false, symbol, error: err.message });
   }
 }

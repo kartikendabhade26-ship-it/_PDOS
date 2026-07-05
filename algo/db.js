@@ -5,16 +5,70 @@ const logger = require('./logger');
 
 const dbInstances = new Map();
 
+function wrapDbInstance(db) {
+  const originalPrepare = db.prepare;
+  db.prepare = function(sql, ...args) {
+    const stmt = originalPrepare.call(db, sql, ...args);
+    const isSelect = sql.trim().toLowerCase().startsWith('select');
+    return new Proxy(stmt, {
+      get(target, prop, receiver) {
+        if (prop === 'all') {
+          return function(...runArgs) {
+            if (global.profiler) {
+              global.profiler.incrementCounter(isSelect ? 'dbReads' : 'dbWrites');
+            }
+            return target.all(...runArgs);
+          };
+        }
+        if (prop === 'get') {
+          return function(...runArgs) {
+            if (global.profiler) {
+              global.profiler.incrementCounter(isSelect ? 'dbReads' : 'dbWrites');
+            }
+            return target.get(...runArgs);
+          };
+        }
+        if (prop === 'run') {
+          return function(...runArgs) {
+            if (global.profiler) {
+              global.profiler.incrementCounter('dbWrites');
+            }
+            return target.run(...runArgs);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      }
+    });
+  };
+
+  const originalExec = db.exec;
+  db.exec = function(sql) {
+    if (global.profiler) {
+      global.profiler.incrementCounter('dbWrites');
+    }
+    return originalExec.call(db, sql);
+  };
+}
+
 function getDB(dbName) {
-  const targetName = dbName || (process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db');
+  const targetName = dbName || process.env.PDOS_DB_NAME || (process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db');
   const targetPath = path.isAbsolute(targetName) ? targetName : path.join(__dirname, '..', targetName);
   
-  let db = dbInstances.get(targetPath);
+  const resolved = path.resolve(targetPath);
+  const canonicalPath = resolved.charAt(1) === ':' ? resolved.charAt(0).toUpperCase() + resolved.slice(1) : resolved;
+
+  let db = dbInstances.get(canonicalPath);
   if (!db) {
-    logger.info('DATABASE', `Initializing SQLite database at: ${targetPath}`);
-    db = new DatabaseSync(targetPath);
-    dbInstances.set(targetPath, db);
-    migrateSchema(db, targetPath);
+    logger.info('DATABASE', `Initializing SQLite database at: ${canonicalPath}`);
+    db = new DatabaseSync(canonicalPath);
+    wrapDbInstance(db);
+    dbInstances.set(canonicalPath, db);
+    try {
+      db.exec('PRAGMA journal_mode = WAL;');
+      db.exec('PRAGMA synchronous = NORMAL;');
+      db.exec('PRAGMA busy_timeout = 10000;');
+    } catch (e) {}
+    migrateSchema(db, canonicalPath);
     initTables(db);
   }
   return db;
@@ -338,6 +392,9 @@ function initTables(db) {
     );
   `);
 
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_event_relations_parent ON event_relationships (run_id, parent_event_id);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_event_relations_child ON event_relationships (run_id, child_event_id);`);
+
   // 8. Event Outcomes Table
   db.exec(`
     CREATE TABLE IF NOT EXISTS event_outcomes (
@@ -468,6 +525,7 @@ function initTables(db) {
   `);
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_liquidity_objects_query ON liquidity_objects (run_id, symbol COLLATE NOCASE, timeframe, origin_timestamp DESC);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_liquidity_objects_sym ON liquidity_objects (run_id, symbol);`);
 
   // 12. Research Sync Checkpoints Table
   db.exec(`
@@ -585,11 +643,38 @@ function executeTransaction(callback, dbNameOrInstance) {
   }
 }
 
+function closeDB(dbName) {
+  const targetName = dbName || process.env.PDOS_DB_NAME || (process.env.USE_TEST_DB === 'true' ? 'market_research_test.db' : 'market_research_v2.db');
+  const targetPath = path.isAbsolute(targetName) ? targetName : path.join(__dirname, '..', targetName);
+
+  const resolved = path.resolve(targetPath);
+  const canonicalPath = resolved.charAt(1) === ':' ? resolved.charAt(0).toUpperCase() + resolved.slice(1) : resolved;
+
+  const db = dbInstances.get(canonicalPath);
+  if (db) {
+    db.close();
+    dbInstances.delete(canonicalPath);
+    logger.info('DATABASE', `Closed SQLite database connection at: ${canonicalPath}`);
+  }
+}
+
+function closeAllDBs() {
+  for (const [targetPath, db] of dbInstances.entries()) {
+    try {
+      db.close();
+      logger.info('DATABASE', `Closed SQLite database connection at: ${targetPath}`);
+    } catch (e) {}
+  }
+  dbInstances.clear();
+}
+
 const DEFAULT_DB_NAME = 'market_research_v2.db';
 const DB_PATH = path.join(__dirname, '..', DEFAULT_DB_NAME);
 
 module.exports = {
   getDB,
+  closeDB,
+  closeAllDBs,
   executeTransaction,
   DB_PATH
 };

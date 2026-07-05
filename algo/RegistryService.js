@@ -25,6 +25,10 @@ class RegistryService {
     this.getRepository().deleteBars(dbName, symbol);
   }
 
+  static deleteBarsExcludingHTF(dbName, symbol) {
+    this.getRepository().deleteBarsExcludingHTF(dbName, symbol);
+  }
+
   // --- Candlestick Methods ---
   static insertBars(dbName, symbol, timeframe, bars) {
     this.getRepository().insertBars(dbName, symbol, timeframe, bars);
