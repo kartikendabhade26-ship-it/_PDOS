@@ -2137,6 +2137,22 @@ export default function DrawingCanvas({
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
+      const { paneWidth, paneHeight } = getChartDimensions();
+
+      if (x > paneWidth) {
+        e.stopPropagation();
+        e.preventDefault();
+        chart.priceScale('right').applyOptions({ autoScale: true });
+        return;
+      }
+
+      if (y > paneHeight) {
+        e.stopPropagation();
+        e.preventDefault();
+        chart.timeScale().resetTimeScale();
+        return;
+      }
+
       const hit = findHit(x, y);
       if (hit && hit.shapeIdx !== undefined) {
         e.stopPropagation();

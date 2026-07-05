@@ -1,3 +1,4 @@
-1. **Add Full Canvas layout / Fullscreen toggle:** Add a toggle in `App.jsx` and CSS in `index.css` to collapse the left drawing sidebar and right watchlist sidebar to allow the chart to take up the "full canvas".
-2. **Review and Verify Frontend changes:** Record a video showing the full canvas toggle in action.
-3. **Pre-commit Steps:** Complete pre-commit steps to make sure proper testing, verifications, reviews and reflections are done.
+1. **Support double-click on price scale:** Add an event listener check in `handleDblClickCapture` in `frontend/src/components/DrawingCanvas.jsx` to verify if the double click occurred within the price scale boundaries (where `x > paneWidth`). If it does, we will trigger `chart.priceScale('right').applyOptions({ autoScale: true })` and `e.stopPropagation()` to reset the scale.
+2. **Support double-click on time scale:** In the same event listener, verify if the double click occurred in the time scale boundaries (where `y > paneHeight`). If it does, trigger `chart.timeScale().resetTimeScale()`.
+3. **Run tests:** Run all relevant tests to ensure the changes are correct and have not introduced regressions.
+4. **Pre-commit Steps:** Complete pre-commit steps to ensure proper testing, verification, review, and reflection are done.
