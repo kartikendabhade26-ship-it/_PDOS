@@ -56,11 +56,6 @@ import {
 import ChartSettingsModal from './components/ChartSettingsModal';
 import ChartViewport from './components/ChartViewport';
 import WatchlistSidebar from './components/WatchlistSidebar';
-// Lazy-load the heavy workspace tabs so they don't bloat the initial bundle.
-// They only load when the user clicks the corresponding tab.
-const ValidationWorkspace = React.lazy(() => import('./components/ValidationWorkspace'));
-const ResearchWorkspace = React.lazy(() => import('./components/ResearchWorkspace'));
-const DiagnosticsWorkspace = React.lazy(() => import('./components/DiagnosticsWorkspace'));
 
 import { getESTInfo } from './utils/sessions';
 import { aggregateDevelopingCandle } from './utils/replayAggregator';
@@ -72,59 +67,6 @@ import {
 } from './utils/storage';
 import { slidingWindowCache1, slidingWindowCache2 } from './utils/SlidingWindowCache';
 
-const CONCEPT_PRESETS = [
-  { id: 'fvg_bullish',    label: 'FVG Bullish',          color: '#26a69a' },
-  { id: 'fvg_bearish',    label: 'FVG Bearish',          color: '#ef5350' },
-  { id: 'ifvg_bullish',   label: 'IFVG Bullish',         color: '#00e676' },
-  { id: 'ifvg_bearish',   label: 'IFVG Bearish',         color: '#ff1744' },
-  { id: 'ob_bullish',     label: 'Order Block Bullish',  color: '#00bcd4' },
-  { id: 'ob_bearish',     label: 'Order Block Bearish',  color: '#ff9800' },
-  { id: 'liquidity_bsl',  label: 'Buy Side Liquidity',   color: '#9c27b0' },
-  { id: 'liquidity_ssl',  label: 'Sell Side Liquidity',  color: '#f44336' },
-  { id: 'swing_bullish',  label: 'Swing Low (Bullish)',  color: '#26a69a' },
-  { id: 'swing_bearish',  label: 'Swing High (Bearish)', color: '#ef5350' },
-  { id: 'strong_swing_bullish',  label: 'Strong Swing Low',  color: '#00e676' },
-  { id: 'strong_swing_bearish',  label: 'Strong Swing High', color: '#ff1744' },
-  { id: 'premium_discount_premium',  label: 'Premium Zone',  color: '#ef5350' },
-  { id: 'premium_discount_discount', label: 'Discount Zone', color: '#26a69a' },
-  { id: 'mss_bullish',    label: 'MSS Bullish',          color: '#26a69a' },
-  { id: 'mss_bearish',    label: 'MSS Bearish',          color: '#ef5350' },
-  { id: 'bos_bullish',    label: 'BOS Bullish',          color: '#26a69a' },
-  { id: 'bos_bearish',    label: 'BOS Bearish',          color: '#ef5350' },
-  { id: 'protected_high_low_bullish',  label: 'Protected Low',  color: '#26a69a' },
-  { id: 'protected_high_low_bearish',  label: 'Protected High', color: '#ef5350' },
-  { id: 'volume_imbalance_bullish',    label: 'Vol Imbalance Bullish', color: '#26a69a' },
-  { id: 'volume_imbalance_bearish',    label: 'Vol Imbalance Bearish', color: '#ef5350' },
-  { id: 'liquidity_void_bullish',      label: 'Liq Void Bullish',      color: '#26a69a' },
-  { id: 'liquidity_void_bearish',      label: 'Liq Void Bearish',      color: '#ef5350' },
-  { id: 'amd_bullish',    label: 'AMD Bullish',          color: '#26a69a' },
-  { id: 'amd_bearish',    label: 'AMD Bearish',          color: '#ef5350' }
-];
-
-const VALIDATION_CRITERIA = [
-  { id: 'displacement', label: 'Strong Displacement (Impulse)' },
-  { id: 'sweep',        label: 'Liquidity Sweep (Pre-sweep)' },
-  { id: 'mss',          label: 'MSS / BOS (Structure Shift)' },
-  { id: 'htf',          label: 'HTF Key Level (HTF Alignment)' },
-  { id: 'reaction',     label: 'Price Reaction (Bounce/Hold)' }
-];
-
-const getVersionsForConcept = (conceptId) => {
-  if (!conceptId) return [];
-  if (conceptId.startsWith('ifvg')) {
-    return ['Common IFVG', 'Mitigated BISI', 'Mitigated SIBI'];
-  }
-  if (conceptId.startsWith('fvg')) {
-    return ['Common FVG', 'Breakaway Gap', 'Measuring Gap', 'Balanced Price Range (BPR)', 'Volume Imbalance'];
-  }
-  if (conceptId.startsWith('ob')) {
-    return ['Standard OB', 'Breaker Block', 'Mitigation Block', 'Propulsion Block', 'Rejection Block'];
-  }
-  if (conceptId.startsWith('liquidity')) {
-    return ['Equal Highs/Lows (EQH/L)', 'Trendline Liquidity', 'Swing High/Low', 'PDH/PDL'];
-  }
-  return [];
-};
 
 function debounce(func, wait) {
   let timeout;
@@ -148,10 +90,11 @@ export default function App() {
   // Data State
   const [symbols, setSymbols] = useState([]);
   const [activeSymbol, setActiveSymbol] = useState('');
-  const [activeResearchMode, setActiveResearchMode] = useState('interactive'); // 'interactive' | 'batch'
+  const [activeResearchMode] = useState('interactive'); // Analysis Mode only
   const [limitBarsInteractive, setLimitBarsInteractive] = useState(80000); // Default 80k bars (options: 2 weeks = 20k, 1 month = 40k, 3 months = 120k)
   const [syncProgress, setSyncProgress] = useState(null);
   const [isProgressOverlayVisible, setIsProgressOverlayVisible] = useState(false);
+  const userDismissedSyncRef = useRef(false);
   const [timeframe, setTimeframe] = useState(1); // minutes
   const [chartType, setChartType] = useState('candle');
   const [allBars, setAllBars] = useState([]);
@@ -326,7 +269,7 @@ export default function App() {
   const [themeColor, setThemeColor] = useState('#2962ff');
 
   // Workspace and View Mode States
-  const [workspaceTab, setWorkspaceTab] = useState('chart'); // 'chart' | 'validation' | 'research' | 'diagnostics'
+  const [workspaceTab, setWorkspaceTab] = useState('chart'); // 'chart' only
   const [debugOverlayFilters, setDebugOverlayFilters] = useState({
     swings: true,
     liquidity: true,
@@ -417,12 +360,7 @@ export default function App() {
 
   // --- AI SWINGS (TradingView Pro toolbar toggle, NEW) ---
   // When enabled, fetches high-confidence swings from /api/ai/swings and passes
-  // them to ChartViewport as the `aiSwings` prop for overlay rendering.
-  const [aiSwingsEnabled, setAiSwingsEnabled] = useState(false);
-  const [aiSwings, setAiSwings] = useState([]);
-  const [aiSwingsLoading, setAiSwingsLoading] = useState(false);
-  const [aiSwingsSummary, setAiSwingsSummary] = useState(null);
-  const [aiSwingsError, setAiSwingsError] = useState(null);
+  // AI Swings removed — aiSwingEngine.js deleted
 
   const [replayMode, setReplayMode] = useState(false);
   const [replayTimeOffset, setReplayTimeOffset] = useState(null);
@@ -736,15 +674,16 @@ export default function App() {
     const tfSec = timeframe * 60;
     const capturedOffset = replayTimeOffset;
 
-    // 1. Candles URL — reduced from 10000 to 3000 for faster initial load.
+    // 1. Candles URL — limit matches the selected bar window (Bars selector in toolbar).
     // The sliding-window cache handles subsequent pan/zoom fetches.
+    const candleLimit = limitBarsInteractive > 0 ? Math.min(limitBarsInteractive, 80000) : 15000;
     let dataUrl;
     if (capturedOffset) {
-      const startSec = capturedOffset - 3000 * tfSec;
+      const startSec = capturedOffset - candleLimit * tfSec;
       const endSec   = capturedOffset + 500  * tfSec;
-      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=3000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&start=${startSec}&end=${endSec}&limit=${candleLimit}&mode=${activeResearchMode}`;
     } else {
-      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=3000&mode=${activeResearchMode}`;
+      dataUrl = `/api/data?symbol=${activeSymbol}&timeframe=${timeframe}&limit=${candleLimit}&mode=${activeResearchMode}`;
     }
 
     // 2. Events URL — reduced from 15000 to 5000 for faster initial load.
@@ -775,6 +714,12 @@ export default function App() {
 
       // Batch state commit in React 18 transition
       React.startTransition(() => {
+        if (candlesData.length > 0) {
+          const minTime = candlesData[0].time;
+          const maxTime = candlesData[candlesData.length - 1].time;
+          slidingWindowCache1.clear();
+          slidingWindowCache1.setRange(activeSymbol, timeframe, activeResearchMode || 'interactive', minTime, maxTime, candlesData, eventsData || []);
+        }
         setAllBars(candlesData);
         setAlgoCandidates(eventsData || []);
         setHudBar(null);
@@ -842,6 +787,12 @@ export default function App() {
       }
 
       React.startTransition(() => {
+        if (candlesData.length > 0) {
+          const minTime = candlesData[0].time;
+          const maxTime = candlesData[candlesData.length - 1].time;
+          slidingWindowCache2.clear();
+          slidingWindowCache2.setRange(activeSymbol, timeframe2, activeResearchMode || 'interactive', minTime, maxTime, candlesData, eventsData || []);
+        }
         setAllBars2(candlesData);
         setAlgoCandidates2(eventsData || []);
         setLoadingState2({ candles: false, events: false });
@@ -1443,8 +1394,9 @@ export default function App() {
   // Trigger manual database sync
   const handleTriggerSync = async () => {
     try {
+      userDismissedSyncRef.current = false;
       setIsProgressOverlayVisible(true);
-      const res = await fetch(`/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limitBarsInteractive}`);
+      const res = await fetch(`/api/algo/sync?symbol=${activeSymbol}&trigger=true&mode=${activeResearchMode}&limitBars=${limitBarsInteractive}&force=true`);
       const data = await res.json();
       if (!data.success) {
         alert("Failed to start sync: " + data.message);
@@ -1468,7 +1420,9 @@ export default function App() {
           setSyncProgress(data);
           
           if (data.status === 'running') {
-            setIsProgressOverlayVisible(true);
+            if (!userDismissedSyncRef.current) {
+              setIsProgressOverlayVisible(true);
+            }
           } else if (data.status === 'completed' || data.status === 'error') {
             if (isProgressOverlayVisible && !reloadTimer) {
               clearInterval(timer);
@@ -1494,6 +1448,22 @@ export default function App() {
       if (reloadTimer) clearTimeout(reloadTimer);
     };
   }, [isProgressOverlayVisible, activeSymbol, activeResearchMode]);
+
+  // Fetch central config on load
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (data && data.success && typeof data.analysisBars === 'number') {
+          setLimitBarsInteractive(data.analysisBars);
+        }
+      } catch (e) {
+        console.error("Failed to load central config:", e);
+      }
+    };
+    fetchConfig();
+  }, []);
 
 
 
@@ -2171,52 +2141,7 @@ export default function App() {
     };
   }, [chartInitialized, chart2Initialized, seriesUpdateTick, series2UpdateTick, layout]);
 
-  // --- AI SWINGS FETCH (TradingView Pro toolbar toggle) ---
-  // When the AI Swings toggle is enabled, fetch high-confidence swings from
-  // /api/ai/swings?symbol=...&timeframe=...&min_score=60&limit=500 and store
-  // the result in state. The result is passed to ChartViewport as `aiSwings`.
-  useEffect(() => {
-    if (!aiSwingsEnabled || !activeSymbol) {
-      setAiSwings([]);
-      setAiSwingsSummary(null);
-      setAiSwingsError(null);
-      setAiSwingsLoading(false);
-      return;
-    }
-
-    const controller = new AbortController();
-    setAiSwingsLoading(true);
-    setAiSwingsError(null);
-
-    fetch(
-      `/api/ai/swings?symbol=${encodeURIComponent(activeSymbol)}&timeframe=${timeframe}&min_score=60&limit=500`,
-      { signal: controller.signal }
-    )
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then(data => {
-        if (data.success) {
-          setAiSwings(data.swings || []);
-          setAiSwingsSummary(data.factors_summary || null);
-        } else {
-          setAiSwings([]);
-          setAiSwingsSummary(null);
-          setAiSwingsError(data.error || 'Failed to load AI swings');
-        }
-        setAiSwingsLoading(false);
-      })
-      .catch(err => {
-        if (err.name === 'AbortError') return;
-        setAiSwingsError(err.message);
-        setAiSwings([]);
-        setAiSwingsSummary(null);
-        setAiSwingsLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [aiSwingsEnabled, activeSymbol, timeframe]);
+  // AI Swings fetch removed — aiSwingEngine deleted
 
   // --- BOTTOM STATUS BAR DERIVED DATA ---
   // Last price + change vs previous close (uses chart's last bar; respects replay position).
@@ -2267,22 +2192,13 @@ export default function App() {
           PDOS<span className="logo-dot" />
         </div>
 
-        {/* Workspace segmented control (Chart / Validation / Research / Diagnostics) */}
+        {/* Workspace segmented control — Chart only in Analysis Mode */}
         <div className="workspace-segmented">
-          {[
-            { id: 'chart', label: 'Chart' },
-            { id: 'validation', label: 'Validation' },
-            { id: 'research', label: 'Research' },
-            { id: 'diagnostics', label: 'Diagnostics' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              className={`workspace-segmented-btn ${workspaceTab === tab.id ? 'active' : ''}`}
-              onClick={() => setWorkspaceTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+          <button
+            className="workspace-segmented-btn active"
+          >
+            Chart
+          </button>
         </div>
 
         <div className="divider" />
@@ -2441,14 +2357,6 @@ export default function App() {
             <BarChart2 size={14} />
           </button>
 
-          {/* AI Swings toggle (NEW) */}
-          <button
-            className={`icon-btn-square ${aiSwingsEnabled ? 'active' : ''}`}
-            onClick={() => setAiSwingsEnabled(v => !v)}
-            title="Toggle AI Swings overlay (high-confidence confluence-scored pivots)"
-          >
-            <Sparkles size={14} />
-          </button>
 
           {/* Replay toggle */}
           <button
@@ -2592,42 +2500,26 @@ export default function App() {
             {syncProgress?.status === 'running' ? 'Syncing' : 'Sync'}
           </button>
 
-          {/* Dataset selector + bar-limit selector */}
+          {/* Bar history limit selector */}
           <div className="dataset-group">
-            <span className="dataset-label">Data</span>
+            <span className="dataset-label">Bars</span>
             <select
               className="symbol-selector compact"
-              value={activeResearchMode}
+              value={limitBarsInteractive}
               onChange={(e) => {
-                const val = e.target.value;
-                setActiveResearchMode(val);
+                const val = parseInt(e.target.value, 10);
+                setLimitBarsInteractive(val);
                 slidingWindowCache1.clear();
                 slidingWindowCache2.clear();
               }}
-              title="Dataset mode"
+              title="Bar history limit"
             >
-              <option value="interactive">Interactive</option>
-              <option value="batch">Batch</option>
+              <option value={20000}>2W</option>
+              <option value={40000}>1M</option>
+              <option value={80000}>3M</option>
+              <option value={120000}>4M</option>
+              <option value={0}>Full</option>
             </select>
-            {activeResearchMode === 'interactive' && (
-              <select
-                className="symbol-selector compact"
-                value={limitBarsInteractive}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  setLimitBarsInteractive(val);
-                  slidingWindowCache1.clear();
-                  slidingWindowCache2.clear();
-                }}
-                title="Bar history limit"
-              >
-                <option value={20000}>2W</option>
-                <option value={40000}>1M</option>
-                <option value={80000}>3M</option>
-                <option value={120000}>4M</option>
-                <option value={0}>Full (15 Yrs)</option>
-              </select>
-            )}
           </div>
 
           {/* Theme toggle */}
@@ -2902,8 +2794,6 @@ export default function App() {
               handleScrollRight={handleScrollRight}
               handleResetScale={handleResetScale}
               saveExplorerLabel={saveExplorerLabel}
-              aiSwings={aiSwings}
-              aiSwingsEnabled={aiSwingsEnabled}
             />
 
             <WatchlistSidebar 
@@ -2936,42 +2826,7 @@ export default function App() {
             />
           </div>
 
-        {workspaceTab === 'validation' && (
-          <React.Suspense fallback={<div className="chart-loading-skeleton"><div className="spinner" />Loading Validation Workspace…</div>}>
-            <ValidationWorkspace
-              activeSymbol={activeSymbol}
-              onSelectEvent={(ev) => {
-                setSelectedAlgoCandidate(ev);
-                setWorkspaceTab('chart');
-                setRightSidebarTab('market');
-              }}
-              onJumpToTime={handleJumpToTime}
-              onSwitchTab={setWorkspaceTab}
-            />
-          </React.Suspense>
-        )}
-
-        {workspaceTab === 'research' && (
-          <React.Suspense fallback={<div className="chart-loading-skeleton"><div className="spinner" />Loading Research Workspace…</div>}>
-            <ResearchWorkspace
-              activeSymbol={activeSymbol}
-              onSelectEvent={(ev) => {
-                setSelectedAlgoCandidate(ev);
-                setWorkspaceTab('chart');
-                setRightSidebarTab('market');
-              }}
-              onJumpToTime={handleJumpToTime}
-              onSwitchTab={setWorkspaceTab}
-            />
-          </React.Suspense>
-        )}
-
-        {workspaceTab === 'diagnostics' && (
-          <React.Suspense fallback={<div className="chart-loading-skeleton"><div className="spinner" />Loading Diagnostics…</div>}>
-            <DiagnosticsWorkspace activeSymbol={activeSymbol} />
-          </React.Suspense>
-        )}
-      </div>
+          </div>
 
       {/* BOTTOM STATUS BAR (24px tall) */}
       <footer className="bottom-bar">
@@ -3020,28 +2875,15 @@ export default function App() {
           )}
         </div>
 
-        {/* RIGHT: AI insights ticker (when AI swings enabled) OR session info */}
+        {/* RIGHT: Session info */}
         <div className="bottom-right-group">
-          {aiSwingsEnabled ? (
-            <span className={`status-ai-badge ${aiSwingsLoading ? 'loading' : ''}`}>
-              <Sparkles size={11} />
-              {aiSwingsLoading
-                ? 'AI: Loading swings…'
-                : aiSwingsError
-                  ? `AI: ${aiSwingsError}`
-                  : aiSwings.length > 0
-                    ? `AI: ${aiSwings.length} high-confidence swings detected`
-                    : 'AI: No swings detected (min_score=60)'}
-            </span>
-          ) : (
-            <>
-              <span className="status-label">Session</span>
-              <span className="status-value">{sessionLabel}</span>
-              <span className="status-divider" />
-              <span className="status-label">TZ</span>
-              <span className="status-value">America/New_York</span>
-            </>
-          )}
+          <>
+            <span className="status-label">Session</span>
+            <span className="status-value">{sessionLabel}</span>
+            <span className="status-divider" />
+            <span className="status-label">TZ</span>
+            <span className="status-value">America/New_York</span>
+          </>
         </div>
       </footer>
 
@@ -3104,7 +2946,19 @@ export default function App() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
                 <span>Bars Processed:</span>
-                <strong style={{ color: '#fff' }}>{syncProgress.bars_processed?.toLocaleString() || 'Processing...'}</strong>
+                <strong style={{ color: '#fff' }}>
+                  {syncProgress.bars_processed !== undefined && syncProgress.bars_processed !== null 
+                    ? syncProgress.bars_processed.toLocaleString() 
+                    : 'Processing...'}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                <span>Time Elapsed:</span>
+                <strong style={{ color: '#fff' }}>
+                  {syncProgress.elapsed_ms > 0 
+                    ? `${Math.round(syncProgress.elapsed_ms / 1000)} seconds` 
+                    : '0 seconds'}
+                </strong>
               </div>
               {syncProgress.total_chunks > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
@@ -3138,6 +2992,30 @@ export default function App() {
                 }} />
               </div>
             )}
+            
+            <button
+              onClick={() => {
+                userDismissedSyncRef.current = true;
+                setIsProgressOverlayVisible(false);
+                setSyncProgress(null);
+              }}
+              style={{
+                marginTop: '10px',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                color: '#fff',
+                fontWeight: 600,
+                cursor: 'pointer',
+                textAlign: 'center',
+                transition: 'background 0.2s',
+              }}
+              onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.15)'}
+              onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.08)'}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

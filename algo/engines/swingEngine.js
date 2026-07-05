@@ -11,8 +11,20 @@ class SwingEngine extends BaseEngine {
   detect(bars, options = {}, context = {}) {
     const { preComputedSwings, symbol } = context;
     const timeframe = this.timeframe || 1;
+
+    if (global.profiler) {
+      global.profiler.incrementCounter('barsProcessed', bars.length);
+    }
+
+    if (global.profiler) global.profiler.startEnginePhase('SwingEngineWrapper', timeframe, 'detect');
     const { rawSwings, allSwings } = preComputedSwings || this.findSwings(bars, timeframe, symbol);
-    return rawSwings || allSwings;
+    const result = rawSwings || allSwings;
+    if (global.profiler) global.profiler.endEnginePhase('SwingEngineWrapper', timeframe, 'detect');
+
+    if (global.profiler) {
+      global.profiler.incrementCounter('eventsProduced', result.length);
+    }
+    return result;
   }
 
   updateState(activeEvents, bars, context = {}) {
@@ -55,13 +67,16 @@ class SwingEngine extends BaseEngine {
   }
 
   findSwings(bars, timeframe = 1, symbol = 'NQ_Historical_Data') {
+    if (global.profiler) global.profiler.startEnginePhase('SwingEngineWrapper', timeframe, 'findSwings');
     // Fast path — degree-1 only. Hierarchy is built by the pipeline, not here.
     const service = new SwingService(timeframe, symbol);
     const swings = service.detect(bars, { degreeLimit: 1 });
     const swingHighs = swings.filter(s => s.type === 'swing_high' && s.isStructural);
     const swingLows  = swings.filter(s => s.type === 'swing_low' && s.isStructural);
     const structuralSwings = swings.filter(s => s.isStructural);
-    return { swingHighs, swingLows, allSwings: structuralSwings, rawSwings: swings };
+    const result = { swingHighs, swingLows, allSwings: structuralSwings, rawSwings: swings };
+    if (global.profiler) global.profiler.endEnginePhase('SwingEngineWrapper', timeframe, 'findSwings');
+    return result;
   }
 }
 

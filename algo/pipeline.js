@@ -4,13 +4,10 @@ const logger = require('./logger');
 const { getCandidates } = require('./detector');
 const { captureEventContext, findIndexUpTo, precomputeRollingMaxMin, precomputeSMA } = require('./contextEngine');
 const { findSwings } = require('./primitives');
-const NarrativeContextEngine = require('./engines/narrativeContextEngine');
-const PDArrayContextEngine = require('./engines/pdArrayContextEngine');
 const SwingService = require('./engines/swingService');
 const { makeEvent } = require('./eventSchema');
 const { getESTOffset } = require('./utils/math/time');
-
-const pdArrayContextEngine = new PDArrayContextEngine();
+const profiler = require('./profiler');
 
 
 /**
@@ -221,6 +218,10 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   logger.info('PIPELINE', `Starting sync pipeline for symbol: ${symbol} (${rawBars.length} bars) (Run: ${runId})`);
   const t0 = Date.now();
 
+  if (global.profiler) {
+    global.profiler.reset();
+  }
+
   // Clear existing run data to prevent duplication on restart
   if (!chunkInfo) {
     RegistryService.clearRunData(dbName, runId);
@@ -242,6 +243,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   };
   
   // 1. Pre-aggregate bars
+  if (global.profiler) global.profiler.startStage('aggregation');
   const tAggregationStart = Date.now();
   logger.info('PIPELINE', `Pre-aggregating bars...`);
   const preAggregated = {
@@ -253,9 +255,11 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   };
   logger.info('PIPELINE', `Pre-aggregation completed. 5m=${preAggregated.tf5Bars.length}, 15m=${preAggregated.tf15Bars.length}, 1H=${preAggregated.tf60Bars.length}, 4H=${preAggregated.tf240Bars.length}, 1D=${preAggregated.tf1440Bars.length}`);
   stageTimings.aggregation = Date.now() - tAggregationStart;
+  if (global.profiler) global.profiler.endStage('aggregation');
 
   // Insert bars into SQLite market_bars table
   logger.info('PIPELINE', 'Writing market bars to database...');
+  if (global.profiler) global.profiler.startStage('dbWriteBars');
   const tBarsWriteStart = Date.now();
 
   RegistryService.executeInTransaction((tx) => {
@@ -300,6 +304,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
     }
   }, dbName);
   logger.info('PIPELINE', `Finished writing market bars to database in ${((Date.now() - tBarsWriteStart) / 1000).toFixed(2)}s.`);
+  if (global.profiler) global.profiler.endStage('dbWriteBars');
 
   const concepts = [
     'swing_bullish', 'swing_bearish',
@@ -322,6 +327,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   ];
 
   // 2. Detect all events across timeframes
+  if (global.profiler) global.profiler.startStage('detection');
   const tDetectionStart = Date.now();
   logger.info('PIPELINE', `Running candidate detectors across 6 timeframes...`);
   const allEvents = [];
@@ -394,96 +400,12 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       }
     }
 
-    // Second pass: Context-driven downstream array detection
-    const tfRanges = allEvents.filter(e => e.timeframe === t.tf && e.concept === 'dealing_range');
-    tfRanges.sort((a, b) => b.time - a.time);
-    const activeRange = tfRanges.find(r => r.state === 'developing') || tfRanges[0];
-
-    if (activeRange) {
-      const searchReq = pdArrayContextEngine.determineSearchRequest(activeRange, t.bars);
-      if (searchReq) {
-        const constrainedConcepts = [];
-        const detectedArrays = [];
-        for (const concept of constrainedConcepts) {
-          const limit = 50000; // Large enough to keep all events in 35MB window, small enough to prevent database bloating
-          const candidates = getCandidates(concept, t.bars, limit, preSwings, symbol, cacheObj, searchReq);
-          
-          for (const c of candidates) {
-            let conceptName = concept.split('_')[0];
-            if (concept.startsWith('volume_imbalance')) {
-              conceptName = 'volume';
-            } else if (concept.startsWith('liquidity_void')) {
-              conceptName = 'liquidity';
-            }
-            
-            const eventId = c.id || `${conceptName}_${c.direction}_${c.time}_tf${t.tf}`;
-            let detectorId = conceptName.toUpperCase() + '_v1';
-            if (concept.startsWith('volume_imbalance')) {
-              detectorId = 'VOLUME_IMBALANCE_v1';
-            } else if (concept.startsWith('liquidity_void')) {
-              detectorId = 'LIQUIDITY_VOID_v1';
-            } else if (concept.startsWith('breaker')) {
-              detectorId = 'BREAKER_v1';
-            }
-            
-            detectedArrays.push({
-              ...c,
-              id: eventId,
-              detectorId,
-              concept: conceptName,
-              timeframe: t.tf,
-              symbol
-            });
-          }
-        }
-
-        const rankedArrays = pdArrayContextEngine.rankAndFilterArrays(detectedArrays, searchReq);
-        allEvents.push(...rankedArrays);
-
-        // Compile the PD_ARRAY_MATRIX event
-        const activePdArrayIds = rankedArrays.map(arr => arr.id);
-        const matrixProperties = {
-          activeRangeId: activeRange.id,
-          activeQuadrant: searchReq.activeQuadrant,
-          narrativeState: searchReq.narrativeState,
-          activePdArrays: activePdArrayIds,
-          equilibrium: searchReq.equilibrium,
-          currentPrice: searchReq.currentPrice
-        };
-
-        const matrixEvent = makeEvent({
-          id: `pd_matrix_${activeRange.id}`,
-          type: 'pd_array_matrix',
-          direction: activeRange.direction,
-          time: activeRange.time,
-          timeStart: activeRange.timeStart,
-          timeEnd: activeRange.timeEnd,
-          priceHigh: activeRange.priceHigh,
-          priceLow: activeRange.priceLow,
-          barIndex: activeRange.barIndex,
-          symbol,
-          timeframe: t.tf,
-          state: activeRange.state,
-          createdBy: activeRange.id,
-          validatedBy: activeRange.validatedBy,
-          lifecycleState: activeRange.state,
-          narrativeRole: 'container',
-          properties: matrixProperties
-        });
-
-        allEvents.push({
-          ...matrixEvent,
-          detectorId: 'PD_ARRAY_CONTEXT_v1',
-          concept: 'pd_array_matrix',
-          timeframe: t.tf,
-          symbol
-        });
-      }
-    }
   }
 
   stageTimings.detection = Date.now() - tDetectionStart;
+  if (global.profiler) global.profiler.endStage('detection');
 
+  if (global.profiler) global.profiler.startStage('filtering');
   const tFilteringStart = Date.now();
   // Sort events chronologically so the Context Engine and MTF nesting search can look backward.
   // For identical timestamps, process Swings first, then Liquidity, then others.
@@ -625,7 +547,9 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
     sma1440m: precomputeSMA(preAggregated.tf1440Bars, 50)
   };
   stageTimings.filtering = Date.now() - tFilteringStart;
+  if (global.profiler) global.profiler.endStage('filtering');
 
+  if (global.profiler) global.profiler.startStage('eventProcessing');
   const tProcessingStart = Date.now();
   let totalDbWriteTime = 0;
   console.log(`[Pipeline] Processing ${allEvents.length} total events. Running Context Engine & Outcomes...`);
@@ -797,6 +721,8 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
   for (let i = 0; i < totalEvents; i += CHUNK_SIZE) {
     const chunk = allEvents.slice(i, i + CHUNK_SIZE);
 
+    if (global.profiler) global.profiler.endStage('eventProcessing');
+    if (global.profiler) global.profiler.startStage('dbWrite');
     const tChunkDbStart = Date.now();
     RegistryService.executeInTransaction(() => {
       for (const e of chunk) {
@@ -1263,8 +1189,10 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       }
     }, dbName);
     totalDbWriteTime += (Date.now() - tChunkDbStart);
+    if (global.profiler) global.profiler.endStage('dbWrite');
+    if (global.profiler) global.profiler.startStage('eventProcessing');
 
-    if (processedCount % 5000 === 0 || processedCount === totalEvents) {
+    if (processedCount % 500 === 0 || processedCount === totalEvents) {
       logger.info('PIPELINE', `Sync progress: ${processedCount} / ${totalEvents} events processed.`);
       if (progressCallback) {
         progressCallback((processedCount / totalEvents) * 100, stageCounts);
@@ -1274,27 +1202,7 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
     await new Promise(resolve => setTimeout(resolve, 0));
   }
 
-  // 5. Compile and save Narrative Context for each timeframe
-  logger.info('PIPELINE', 'Compiling Narrative Context events...');
-  const narrativeContexts = [];
-  const narrativeEngine = new NarrativeContextEngine();
-  
-  for (const t of timeframes) {
-    const tfRanges = allEvents.filter(e => e.timeframe === t.tf && e.concept === 'dealing_range');
-    const tfPdArrays = allEvents.filter(e => e.timeframe === t.tf && (e.concept === 'fvg' || e.concept === 'ifvg' || e.concept === 'ob' || e.concept === 'breaker' || e.concept === 'pd_array_matrix'));
-    
-    // Sort ranges descending by time so the most recent is first
-    tfRanges.sort((a, b) => b.time - a.time);
-    
-    const contextEvent = narrativeEngine.compileContext(symbol, t.tf, tfRanges, tfPdArrays);
-    if (contextEvent) {
-      contextEvent.symbol = symbol;
-      contextEvent.timeframe = t.tf;
-      narrativeContexts.push(contextEvent);
-    }
-  }
-
-  // Relate Dealing Ranges and nested objects
+  // 5. Relate Dealing Ranges and nested objects
   logger.info('PIPELINE', 'Building Dealing Range relationships...');
   const tRelDbStart = Date.now();
   RegistryService.executeInTransaction(() => {
@@ -1308,6 +1216,11 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       rangesByTf[r.timeframe].push(r);
     }
 
+    // Sort child ranges chronologically by timeStart (or time) to ensure binary search correctness
+    for (const tfVal of Object.keys(rangesByTf)) {
+      rangesByTf[tfVal].sort((a, b) => (a.timeStart || a.time) - (b.timeStart || b.time));
+    }
+
     // Group PD arrays by timeframe for fast lookup
     const pdArraysByTf = {};
     for (const arr of allPdArrays) {
@@ -1315,81 +1228,131 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
       pdArraysByTf[arr.timeframe].push(arr);
     }
 
+    // Note: allEvents and allPdArrays are already sorted chronologically by time
     const tfs = [1, 5, 15, 60, 240, 1440];
 
+    const relationsToInsert = [];
+
+    logger.info('PIPELINE', `Total allRanges to process: ${allRanges.length}`);
+    let rangeCount = 0;
     for (const range of allRanges) {
+      rangeCount++;
+      if (rangeCount % 100 === 0) {
+        logger.info('PIPELINE', `Relating dealing ranges progress: ${rangeCount}/${allRanges.length}...`);
+      }
       // 1. Targets Relationship
       const targetLiqId = range.properties?.deliveryState?.target_liquidity_id;
       if (targetLiqId) {
-        insertRelationship.run(runId, range.id, targetLiqId, 'targets');
+        relationsToInsert.push({
+          parent_event_id: range.id,
+          child_event_id: targetLiqId,
+          relationship_type: 'targets'
+        });
         stageCounts.relationshipsBuilt++;
       }
 
       // 2. Contains and Nested Inside Relationships
       const rHigh = range.priceHigh;
       const rLow = range.priceLow;
-      const rStart = range.timeStart;
+      const rStart = range.timeStart || range.time;
       const rEnd = range.timeEnd || Infinity;
 
       // Find nested child ranges (lower timeframes only)
       for (const tfVal of tfs) {
         if (tfVal >= range.timeframe) continue;
         const childRanges = rangesByTf[tfVal] || [];
-        for (const childRange of childRanges) {
+        
+        // Binary search to find first index where childStart >= rStart
+        let startIdx = childRanges.length;
+        let low = 0;
+        let high = childRanges.length - 1;
+        while (low <= high) {
+          const mid = (low + high) >> 1;
+          const childStart = childRanges[mid].timeStart || childRanges[mid].time;
+          if (childStart >= rStart) {
+            startIdx = mid;
+            high = mid - 1;
+          } else {
+            low = mid + 1;
+          }
+        }
+        
+        // Scan forward chronologically
+        for (let j = startIdx; j < childRanges.length; j++) {
+          const childRange = childRanges[j];
+          const childStart = childRange.timeStart || childRange.time;
+          if (childStart > rEnd) break; // Chronologically sorted, past parent range bounds
           if (childRange.id === range.id) continue;
+          if (childStart < rStart) continue; // safety fallback
 
-          // Prune out-of-time-bounds ranges immediately (extremely fast check)
-          if (childRange.timeStart < rStart || (childRange.timeEnd || childRange.timeStart) > rEnd) continue;
+          // timeEnd condition
+          const childEnd = childRange.timeEnd || childStart;
+          if (childEnd > rEnd) continue;
 
           if (childRange.priceLow >= rLow &&
               childRange.priceHigh <= rHigh) {
-            // range contains childRange
-            insertRelationship.run(runId, range.id, childRange.id, 'contains');
-            // childRange nested_inside range
-            insertRelationship.run(runId, range.id, childRange.id, 'nested_inside');
+            relationsToInsert.push({
+              parent_event_id: range.id,
+              child_event_id: childRange.id,
+              relationship_type: 'contains'
+            });
+            relationsToInsert.push({
+              parent_event_id: range.id,
+              child_event_id: childRange.id,
+              relationship_type: 'nested_inside'
+            });
             stageCounts.relationshipsBuilt += 2;
           }
         }
       }
 
-      // Find active PD arrays inside this Dealing Range
+      // Find active PD arrays inside this Dealing Range (same timeframe only)
       const sameTfPdArrays = pdArraysByTf[range.timeframe] || [];
-      for (const arr of sameTfPdArrays) {
-        if (arr.time < rStart || arr.time > rEnd) continue;
+      
+      // Binary search to find first index where arr.time >= rStart
+      let pdStartIdx = sameTfPdArrays.length;
+      let pdLow = 0;
+      let pdHigh = sameTfPdArrays.length - 1;
+      while (pdLow <= pdHigh) {
+        const mid = (pdLow + pdHigh) >> 1;
+        if (sameTfPdArrays[mid].time >= rStart) {
+          pdStartIdx = mid;
+          pdHigh = mid - 1;
+        } else {
+          pdLow = mid + 1;
+        }
+      }
+
+      // Scan forward chronologically
+      for (let j = pdStartIdx; j < sameTfPdArrays.length; j++) {
+        const arr = sameTfPdArrays[j];
+        if (arr.time > rEnd) break; // Chronologically sorted, past parent bounds
         if (arr.priceLow >= rLow &&
             arr.priceHigh <= rHigh) {
-          insertRelationship.run(runId, range.id, arr.id, 'contains');
+          relationsToInsert.push({
+            parent_event_id: range.id,
+            child_event_id: arr.id,
+            relationship_type: 'contains'
+          });
           stageCounts.relationshipsBuilt++;
         }
       }
+
+      if (relationsToInsert.length >= 5000) {
+        RegistryService.insertRelationships(dbName, runId, relationsToInsert);
+        relationsToInsert.length = 0;
+      }
     }
 
-    // Save compiled Narrative Contexts
-    for (const ctx of narrativeContexts) {
-      const serialized = narrativeEngine.serialize(ctx);
-      insertEvent.run(
-        runId,
-        serialized.event_id,
-        serialized.root_event_id,
-        serialized.parent_event_id,
-        serialized.detector_id,
-        serialized.symbol,
-        serialized.timeframe,
-        serialized.concept_family,
-        serialized.concept_type,
-        serialized.concept_state,
-        serialized.time_start,
-        serialized.time_end,
-        serialized.price_high,
-        serialized.price_low,
-        serialized.direction,
-        serialized.properties
-      );
-      stageCounts.eventsCreated++;
+    if (relationsToInsert.length > 0) {
+      logger.info('PIPELINE', `Inserting remaining ${relationsToInsert.length} Dealing Range relationships...`);
+      RegistryService.insertRelationships(dbName, runId, relationsToInsert);
+      relationsToInsert.length = 0;
     }
+
   }, dbName);
   totalDbWriteTime += (Date.now() - tRelDbStart);
-
+  if (global.profiler) global.profiler.endStage('dealingRangeRelations');
 
   stageTimings.processing = Math.max(0, Date.now() - tProcessingStart - totalDbWriteTime);
   stageTimings.dbWrite = totalDbWriteTime;
@@ -1412,6 +1375,87 @@ async function syncSymbolPipeline(symbol, rawBars, runId = 'run_legacy', chunkIn
     },
     lastUpdated: new Date().toISOString()
   };
+
+  if (global.profiler) {
+    const reportData = global.profiler.report();
+    const totalTimeMs = Date.now() - t0;
+    const reportMd = generateTelemetryReport(reportData, totalTimeMs, symbol, rawBars.length);
+    const reportFilePath = path.join('C:\\Users\\karti\\.gemini\\antigravity-ide\\brain\\89c7c71c-cb2d-4aa9-809b-66b11939638a', 'telemetry_report.md');
+    try {
+      fs.writeFileSync(reportFilePath, reportMd, 'utf8');
+      logger.info('TELEMETRY', `Saved telemetry report to ${reportFilePath}`);
+    } catch (err) {
+      logger.warn('TELEMETRY', `Failed to write telemetry report: ${err.message}`);
+    }
+  }
+}
+
+function generateTelemetryReport(profilerReport, totalTime, symbol, barsCount) {
+  const { stages, engines, counters } = profilerReport;
+
+  // Find top 5 bottlenecks
+  const bottlenecks = [];
+  
+  // Stages bottlenecks
+  for (const [stage, ms] of Object.entries(stages)) {
+    bottlenecks.push({ name: `Stage: ${stage}`, ms, type: 'stage' });
+  }
+
+  // Engine / Phase bottlenecks
+  for (const [engine, tfs] of Object.entries(engines)) {
+    for (const [tf, tfData] of Object.entries(tfs)) {
+      bottlenecks.push({ name: `Engine: ${engine} (TF: ${tf})`, ms: tfData.totalMs, type: 'engine' });
+      for (const [phase, phaseMs] of Object.entries(tfData.phases)) {
+        bottlenecks.push({ name: `Phase: ${engine}.${phase} (TF: ${tf})`, ms: phaseMs, type: 'phase' });
+      }
+    }
+  }
+
+  bottlenecks.sort((a, b) => b.ms - a.ms);
+  const topBottlenecks = bottlenecks.slice(0, 5);
+
+  let md = `# Telemetry Profiling Report - ${symbol}\n\n`;
+  md += `- **Date/Time**: ${new Date().toISOString()}\n`;
+  md += `- **Total Bars Processed**: ${barsCount}\n`;
+  md += `- **Total Sync Time**: ${totalTime.toFixed(2)} ms\n\n`;
+
+  md += `## 1. Stage Runtime Breakdown\n\n`;
+  md += `| Stage | Runtime (ms) | Percentage |\n`;
+  md += `| --- | --- | --- |\n`;
+  for (const [stage, ms] of Object.entries(stages)) {
+    const pct = ((ms / totalTime) * 100).toFixed(2);
+    md += `| ${stage} | ${ms.toFixed(2)} | ${pct}% |\n`;
+  }
+  md += `\n`;
+
+  md += `## 2. Engine and Timeframe Runtime Breakdown\n\n`;
+  md += `| Engine | Timeframe | Total Time (ms) | Phase Breakdowns |\n`;
+  md += `| --- | --- | --- | --- |\n`;
+  for (const [engine, tfs] of Object.entries(engines)) {
+    for (const [tf, tfData] of Object.entries(tfs)) {
+      let phaseStr = Object.entries(tfData.phases)
+        .map(([ph, ms]) => `${ph}: ${ms.toFixed(2)} ms`)
+        .join('<br>');
+      md += `| ${engine} | ${tf} | ${tfData.totalMs.toFixed(2)} | ${phaseStr} |\n`;
+    }
+  }
+  md += `\n`;
+
+  md += `## 3. Metrics Counters\n\n`;
+  md += `- **Bars Processed**: ${counters.barsProcessed}\n`;
+  md += `- **Events Produced**: ${counters.eventsProduced}\n`;
+  md += `- **Database Reads**: ${counters.dbReads}\n`;
+  md += `- **Database Writes**: ${counters.dbWrites}\n\n`;
+
+  md += `## 4. Top 5 Performance Bottlenecks\n\n`;
+  md += `| Rank | Bottleneck Name | Runtime (ms) | Percentage |\n`;
+  md += `| --- | --- | --- | --- |\n`;
+  topBottlenecks.forEach((b, idx) => {
+    const pct = ((b.ms / totalTime) * 100).toFixed(2);
+    md += `| ${idx + 1} | ${b.name} | ${b.ms.toFixed(2)} | ${pct}% |\n`;
+  });
+
+  return md;
 }
 
 module.exports = {

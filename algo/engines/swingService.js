@@ -32,6 +32,11 @@ class SwingService {
    */
   detect(bars, options = {}) {
     if (!bars || bars.length === 0) return [];
+    const timeframe = this.timeframe || 1;
+
+    if (global.profiler) {
+      global.profiler.incrementCounter('barsProcessed', bars.length);
+    }
 
     const degreeLimit = options.degreeLimit !== undefined ? options.degreeLimit : 3;
 
@@ -40,13 +45,18 @@ class SwingService {
     const rightLen = 1;
 
     // 2. Scan for raw candidates using SwingMath (typed arrays — low heap cost)
+    if (global.profiler) global.profiler.startEnginePhase('SwingEngine', timeframe, 'scanSwingCandidates');
     const { isHighCand, isLowCand } = scanSwingCandidates(bars, leftLen, rightLen);
+    if (global.profiler) global.profiler.endEnginePhase('SwingEngine', timeframe, 'scanSwingCandidates');
 
     // 3. Resolve flat runs (typed arrays)
+    if (global.profiler) global.profiler.startEnginePhase('SwingEngine', timeframe, 'resolveFlatRuns');
     const { finalIndices: finalHighs, confirmIndices: confirmHighs } = resolveFlatRuns(bars, isHighCand, isLowCand, true);
     const { finalIndices: finalLows, confirmIndices: confirmLows } = resolveFlatRuns(bars, isLowCand, isHighCand, false);
+    if (global.profiler) global.profiler.endEnginePhase('SwingEngine', timeframe, 'resolveFlatRuns');
 
     // 4. Instantiate raw degree-1 swings
+    if (global.profiler) global.profiler.startEnginePhase('SwingEngine', timeframe, 'instantiateSwings');
     const d1Swings = [];
     for (let idx = 0; idx < bars.length; idx++) {
       if (finalHighs[idx] === 1) {
@@ -88,14 +98,18 @@ class SwingService {
         });
       }
     }
+    if (global.profiler) global.profiler.endEnginePhase('SwingEngine', timeframe, 'instantiateSwings');
 
     // 5. Resolve sequence conflicts (Alternation, replacement, outside bars)
+    if (global.profiler) global.profiler.startEnginePhase('SwingEngine', timeframe, 'resolveSequences');
     const resolvedD1 = resolveSequences(d1Swings);
+    if (global.profiler) global.profiler.endEnginePhase('SwingEngine', timeframe, 'resolveSequences');
 
     let allSwings = resolvedD1;
 
     // 6. Build swing hierarchy (degree 2 and 3) — skipped on fast path
     if (degreeLimit > 1) {
+      if (global.profiler) global.profiler.startEnginePhase('SwingEngine', timeframe, 'buildHierarchy');
       const hierarchyBuilder = new SwingHierarchyBuilder();
       const structuralD1 = resolvedD1.filter(s => s.isStructural);
       const promotedSwings = hierarchyBuilder.build(structuralD1, degreeLimit);
@@ -106,18 +120,22 @@ class SwingService {
       }
       
       allSwings = [...resolvedD1, ...promotedSwings];
+      if (global.profiler) global.profiler.endEnginePhase('SwingEngine', timeframe, 'buildHierarchy');
     }
 
     // 7. Validate (optional, only enabled in pipeline for sync runs)
     if (options.validate) {
+      if (global.profiler) global.profiler.startEnginePhase('SwingEngine', timeframe, 'validate');
       const validator = new SwingValidator();
       const valResult = validator.validate(allSwings);
       if (!valResult.isValid) {
         console.warn(`[SwingService Validation Warnings] symbol=${this.symbol} tf=${this.timeframe}:`, valResult.errors.join('; '));
       }
+      if (global.profiler) global.profiler.endEnginePhase('SwingEngine', timeframe, 'validate');
     }
 
     // 8. Inject strength score and plain properties object (no lazy getter overhead)
+    if (global.profiler) global.profiler.startEnginePhase('SwingEngine', timeframe, 'postProcess');
     for (let i = 0; i < allSwings.length; i++) {
       const s = allSwings[i];
       
@@ -145,7 +163,11 @@ class SwingService {
         renderHint: s.renderHint || (s.isStructural ? 'normal' : 'hidden')
       };
     }
+    if (global.profiler) global.profiler.endEnginePhase('SwingEngine', timeframe, 'postProcess');
 
+    if (global.profiler) {
+      global.profiler.incrementCounter('eventsProduced', allSwings.length);
+    }
     return allSwings;
   }
 }

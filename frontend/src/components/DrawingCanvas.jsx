@@ -2446,8 +2446,19 @@ export default function DrawingCanvas({
 
         if (isDealingRange) {
           if (layers.dealingRanges === false) return false;
-          if (obj.timeEnd && layers.showHistoricalRanges === false && (!selectedAlgoCandidateRef.current || selectedAlgoCandidateRef.current.id !== obj.id)) {
-            return false;
+          const isSelected = selectedAlgoCandidateRef.current && selectedAlgoCandidateRef.current.id === obj.id;
+          if (!isSelected) {
+            const isActive = obj.state === 'active' || obj.state === 'developing' || !obj.timeEnd;
+            if (isActive) {
+              if (!activeRange || activeRange.id !== obj.id) return false;
+            } else {
+              // Most recent completed range always shows; older ones need showHistoricalRanges
+              if (completedRange && completedRange.id === obj.id) {
+                // Allow — this is the most recent completed range
+              } else {
+                if (layers.showHistoricalRanges === false) return false;
+              }
+            }
           }
           if (limit !== null && limit !== Infinity) {
             const confTime = obj.properties?.confirmation_time || obj.timeConfirm || obj.time;
@@ -2469,7 +2480,20 @@ export default function DrawingCanvas({
         return targetLayer === layerName;
       });
 
-      console.log(`[DrawingCanvas Debug] layer:${layerName} vis:${visibleObjects.length} filt:${filtered.length} liq_layer:${analysisLayersRef.current?.liquidity}`);
+      // Dealing range diagnostic logging
+      if (layerName === 'ZonesLayer') {
+        const drInVisible = visibleObjects.filter(o => o.type === 'dealing_range');
+        const drInFiltered = filtered.filter(o => o.type === 'dealing_range');
+        console.log(`[DrawingCanvas Debug] layer:${layerName} vis:${visibleObjects.length} filt:${filtered.length} DR_vis:${drInVisible.length} DR_filt:${drInFiltered.length} activeRange:${activeRange?.id || 'NONE'} completedRange:${completedRange?.id || 'NONE'} dealingRangesLayer:${analysisLayersRef.current?.dealingRanges}`);
+        if (drInVisible.length > 0 && drInFiltered.length === 0) {
+          console.warn('[DrawingCanvas DR Debug] DRs exist in visible but ALL filtered out!');
+          drInVisible.slice(0, 3).forEach(dr => {
+            console.warn(`  DR id=${dr.id} state=${dr.state} type=${dr.type} timeStart=${dr.timeStart} timeEnd=${dr.timeEnd}`);
+          });
+        }
+      } else {
+        console.log(`[DrawingCanvas Debug] layer:${layerName} vis:${visibleObjects.length} filt:${filtered.length}`);
+      }
 
       const labelOccupied = new Set();
       let selectedDrawn = false;

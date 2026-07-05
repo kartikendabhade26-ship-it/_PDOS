@@ -258,10 +258,17 @@ async function _parseCsvFileInner(filePath, forceFull = false, limitBars = null)
       console.log(`[parseCsvFile] Finished reading ${lineCount} lines. Sorting ${bars.length} bars...`);
       // Sort bars chronologically
       bars.sort((a, b) => a.time - b.time);
+
+      let finalBars = bars;
+      if (!forceFull && limitBars && bars.length > limitBars) {
+        finalBars = bars.slice(-limitBars);
+        console.log(`[parseCsvFile] Sliced to exactly the last ${limitBars} bars.`);
+      }
+
       console.log(`[parseCsvFile] Sorting complete. Precomputing daily highs/lows...`);
-      precomputeDailyHighLows(bars);
+      precomputeDailyHighLows(finalBars);
       console.log(`[parseCsvFile] Precomputation complete. Resolving bars...`);
-      resolve(bars);
+      resolve(finalBars);
     });
 
     rl.on('error', (err) => {

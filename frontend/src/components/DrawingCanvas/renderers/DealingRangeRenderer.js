@@ -12,22 +12,22 @@ export default class DealingRangeRenderer {
     let t1 = event.timeEnd;
     
     if (t1) {
-      // Range is completed. Stop projection at event.timeEnd + 5 bars for readability.
+      // Range is completed. Stop projection at event.timeEnd + 3 bars for readability.
       const idx = allBars.findIndex(b => b.time >= t1);
       if (idx !== -1) {
-        const targetIdx = Math.min(allBars.length - 1, idx + 5);
+        const targetIdx = Math.min(allBars.length - 1, idx + 3);
         t1 = allBars[targetIdx].time;
       } else {
-        t1 = t1 + timeframe * 60 * 5;
+        t1 = t1 + timeframe * 60 * 3;
       }
     } else {
-      // Range is active. Extend to current bar + 20 bars.
+      // Range is active. Draw until the latest bar (or current replay limit).
       if (utils.replayMode && utils.limit && utils.limit !== Infinity) {
-        t1 = utils.limit + timeframe * 60 * 20;
+        t1 = utils.limit;
       } else if (allBars.length > 0) {
-        t1 = allBars[allBars.length - 1].time + timeframe * 60 * 20;
+        t1 = allBars[allBars.length - 1].time;
       } else {
-        t1 = event.time + timeframe * 60 * 50;
+        t1 = event.time + timeframe * 60 * 20;
       }
     }
 
@@ -82,15 +82,15 @@ export default class DealingRangeRenderer {
     const yMid = ry50;
 
     // 1. Draw premium (top) and discount (bottom) background fills
-    ctx.fillStyle = 'rgba(38, 166, 154, 0.08)'; // Premium green fill
+    ctx.fillStyle = 'rgba(38, 166, 154, 0.50)'; // Premium green fill
     ctx.fillRect(rx0, yTop, rx1 - rx0, yMid - yTop);
 
-    ctx.fillStyle = 'rgba(239, 83, 80, 0.08)'; // Discount red fill
+    ctx.fillStyle = 'rgba(239, 83, 80, 0.50)'; // Discount red fill
     ctx.fillRect(rx0, yMid, rx1 - rx0, yBot - yMid);
 
-    // 2. Draw thin left vertical line
-    ctx.lineWidth = 1.0;
-    ctx.strokeStyle = 'rgba(178, 181, 190, 0.4)';
+    // 2. Draw left vertical border — solid, clearly visible
+    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = 'rgba(178, 181, 190, 0.85)';
     ctx.beginPath();
     ctx.moveTo(rx0, yTop);
     ctx.lineTo(rx0, yBot);
@@ -98,11 +98,11 @@ export default class DealingRangeRenderer {
 
     // 3. Draw horizontal level lines
     const levels = [
-      { ry: ry100, label: '0',    price: price100, color: '#26a69a', width: 1.5 },
-      { ry: ry75,  label: '0.25', price: price75,  color: '#26a69a', width: 1.0 },
-      { ry: ry50,  label: '0.5',  price: price50,  color: '#26a69a', width: 1.5 },
-      { ry: ry25,  label: '0.75', price: price25,  color: '#ef5350', width: 1.0 },
-      { ry: ry0,   label: '1',    price: price0,   color: '#ef5350', width: 1.5 }
+      { ry: ry100, label: '100',  price: price100, color: 'rgba(38, 166, 154, 0.95)', width: 2.0 },
+      { ry: ry75,  label: '75',   price: price75,  color: 'rgba(38, 166, 154, 0.70)', width: 1.0 },
+      { ry: ry50,  label: '50',   price: price50,  color: 'rgba(200, 200, 200, 0.80)', width: 1.5 },
+      { ry: ry25,  label: '25',   price: price25,  color: 'rgba(239, 83,  80, 0.70)', width: 1.0 },
+      { ry: ry0,   label: '0',    price: price0,   color: 'rgba(239, 83,  80, 0.95)', width: 2.0 }
     ];
 
     levels.forEach(level => {
@@ -115,8 +115,8 @@ export default class DealingRangeRenderer {
       ctx.stroke();
     });
 
-    // 4. Draw the text labels at the end of each line
-    ctx.font = '11px "Inter", "Outfit", sans-serif';
+    // 4. Draw the text labels at the right end of each line
+    ctx.font = '11.5px "Inter", "Outfit", sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     
@@ -125,8 +125,6 @@ export default class DealingRangeRenderer {
       ctx.fillStyle = level.color;
       const priceFmt = level.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const text = `${level.label} (${priceFmt})`;
-      
-      // Draw text at the right side of the horizontal line
       ctx.fillText(text, rx1 + 6, level.ry);
     });
 

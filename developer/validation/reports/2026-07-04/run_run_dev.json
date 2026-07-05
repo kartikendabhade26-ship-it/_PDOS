@@ -1,0 +1,43 @@
+{
+  "run_id": "run_dev",
+  "timestamp": "2026-07-04T15:33:33.964Z",
+  "correctness": {
+    "nq_session_2026_06_15.json": {
+      "swings": {
+        "passed": true,
+        "errors": []
+      },
+      "liquidity": {
+        "passed": true,
+        "errors": []
+      },
+      "registry": {
+        "passed": true,
+        "errors": []
+      },
+      "dealingRanges": {
+        "passed": true,
+        "errors": []
+      },
+      "pdMatrix": {
+        "passed": true,
+        "errors": []
+      }
+    }
+  },
+  "performance": {
+    "passed": true,
+    "barsPerSecond": 187265.91760299625,
+    "heapDeltaMb": -50.25628662109375,
+    "timeMs": 534
+  },
+  "dbConsistency": {
+    "passed": true,
+    "errors": []
+  },
+  "rendering": {
+    "passed": true,
+    "errors": []
+  },
+  "passed": true
+}

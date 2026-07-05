@@ -11,15 +11,23 @@ const LiquidityEngine = require('./liquidityEngine');
 class LiquidityInteractionEngine extends BaseEngine {
   detect(bars, options = {}, context = {}) {
     const { preComputedSwings, preComputedLiquidity, symbol } = context;
+    const timeframe = this.timeframe || 1;
 
+    if (global.profiler) {
+      global.profiler.incrementCounter('barsProcessed', bars.length);
+    }
+
+    if (global.profiler) global.profiler.startEnginePhase('LiquidityInteractionEngine', timeframe, 'dependencyResolution');
     const swingEngine = new SwingEngine();
     const swings = preComputedSwings || swingEngine.findSwings(bars);
 
     const liquidityEngine = new LiquidityEngine();
     const pools = preComputedLiquidity || liquidityEngine.detect(bars, { concept: 'liquidity' }, { preComputedSwings: swings, symbol });
+    if (global.profiler) global.profiler.endEnginePhase('LiquidityInteractionEngine', timeframe, 'dependencyResolution');
 
     if (bars.length === 0) return [];
 
+    if (global.profiler) global.profiler.startEnginePhase('LiquidityInteractionEngine', timeframe, 'interactionTracking');
     const interactions = [];
 
     for (const p of pools) {
@@ -145,7 +153,13 @@ class LiquidityInteractionEngine extends BaseEngine {
       }
     }
 
-    return interactions.sort((a, b) => a.barIndex - b.barIndex);
+    const sorted = interactions.sort((a, b) => a.barIndex - b.barIndex);
+    if (global.profiler) global.profiler.endEnginePhase('LiquidityInteractionEngine', timeframe, 'interactionTracking');
+
+    if (global.profiler) {
+      global.profiler.incrementCounter('eventsProduced', sorted.length);
+    }
+    return sorted;
   }
 
   updateState(activeEvents, bars, context = {}) {

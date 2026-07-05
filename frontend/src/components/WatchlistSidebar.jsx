@@ -1,5 +1,4 @@
 import React from 'react';
-import ChatAssistant from './ChatAssistant';
 
 // Static watchlist context symbols (the project only ships NQ_Historical_Data,
 // so these provide TradingView-style visual context for the futures chain).
@@ -111,12 +110,6 @@ export default function WatchlistSidebar({
           onClick={() => setRightSidebarTab('research')}
         >
           Details
-        </button>
-        <button
-          className={`watchlist-tab ${rightSidebarTab === 'chat' ? 'active' : ''}`}
-          onClick={() => setRightSidebarTab('chat')}
-        >
-          AI Chat
         </button>
       </div>
 
@@ -356,14 +349,6 @@ export default function WatchlistSidebar({
         );
       })()}
 
-      {/* AI CHAT TAB */}
-      {rightSidebarTab === 'chat' && (
-        <ChatAssistant 
-          activeSymbol={activeSymbol}
-          drawings={drawings}
-          setDrawings={setDrawings}
-        />
-      )}
     </aside>
   );
 }

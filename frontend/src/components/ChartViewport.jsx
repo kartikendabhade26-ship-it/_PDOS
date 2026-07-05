@@ -4,7 +4,6 @@ import DrawingCanvas from './DrawingCanvas';
 import FloatingToolbar from './FloatingToolbar';
 import DrawingSettingsModal from './DrawingSettingsModal';
 import ReplayControls from './ReplayControls';
-import CandidateExplorer from './CandidateExplorer';
 
 export default function ChartViewport({
   // Container Refs
@@ -592,13 +591,6 @@ export default function ChartViewport({
         onAddUndoState={handleAddUndoState}
       />
 
-      {/* Candidate Explorer Card */}
-      <CandidateExplorer 
-        selectedAlgoCandidate={selectedAlgoCandidate}
-        setSelectedAlgoCandidate={setSelectedAlgoCandidate}
-        onSaveValidation={saveExplorerLabel}
-        algoCandidates={algoCandidates}
-      />
 
       {/* HUD OHLC BAR */}
       {hudBar && chartSettings.showOhlc && (
